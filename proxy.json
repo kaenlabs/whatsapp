@@ -1,0 +1,8 @@
+{
+  "enabled": false,
+  "type": "http",
+  "host": "103.141.148.62",
+  "port": "5678",
+  "username": "",
+  "password": ""
+}

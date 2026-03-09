@@ -1,0 +1,63 @@
+{
+  "name": "whatsapp-sender",
+  "version": "2.1.0",
+  "description": "WhatsApp Toplu Mesaj Göndericisi",
+  "main": "electron.js",
+  "scripts": {
+    "start": "node server.js",
+    "desktop": "electron .",
+    "build": "electron-builder --win --config.win.signAndEditExecutable=false",
+    "build-portable": "electron-builder --win portable --config.win.signAndEditExecutable=false",
+    "build-setup": "electron-builder --win nsis --config.win.signAndEditExecutable=false",
+    "publish": "electron-builder --win --publish always --config.win.signAndEditExecutable=false"
+  },
+  "build": {
+    "appId": "com.whatsapp.sender",
+    "productName": "WhatsApp Sender",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!dist/**",
+      "!.wwebjs_auth/**",
+      "!.wwebjs_cache/**",
+      "!whatsapp-sender-data/**"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "kaenlabs",
+        "repo": "whatsapp",
+        "releaseType": "release"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": null
+    },
+    "nsis": {
+      "oneClick": true,
+      "allowToChangeInstallationDirectory": false,
+      "artifactName": "WhatsApp-Sender-Setup-${version}.exe",
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "WhatsApp-Sender-Portable-${version}.exe"
+    }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.3",
+    "express": "^4.18.2",
+    "qrcode": "^1.5.3",
+    "socket.io": "^4.7.4",
+    "whatsapp-web.js": "github:pedroslopez/whatsapp-web.js"
+  },
+  "devDependencies": {
+    "electron": "^28.1.0",
+    "electron-builder": "^24.9.1"
+  }
+}

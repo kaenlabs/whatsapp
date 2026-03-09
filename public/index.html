@@ -1,0 +1,1173 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Mesaj Gondericisi</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --bg: #080810; --panel: #0f0f1e; --panel2: #13132a;
+            --border: #2a1a5e; --border-bright: #5b21b6;
+            --purple: #7c3aed; --purple-l: #a855f7; --purple-xl: #c084fc;
+            --glow: rgba(168,85,247,0.45); --glow-s: rgba(124,58,237,0.18);
+            --text: #e2e8f0; --muted: #94a3b8; --dim: #4b5563;
+            --ok: #10b981; --err: #ef4444; --warn: #f59e0b;
+            --inp: #1a1930; --inp-border: #372d6b;
+        }
+        body { font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif; background:var(--bg); color:var(--text); height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+        .header { background:linear-gradient(135deg,#150930,#0a0a18); border-bottom:1px solid var(--border-bright); box-shadow:0 0 30px var(--glow); padding:12px 20px; display:flex; align-items:center; gap:14px; flex-shrink:0; }
+        .header-icon { font-size:28px; filter:drop-shadow(0 0 8px var(--purple-l)); }
+        .header h1 { font-size:17px; font-weight:800; letter-spacing:0.6px; color:var(--purple-xl); text-shadow:0 0 20px var(--glow); }
+        .header-sub { font-size:11px; color:var(--muted); margin-top:2px; }
+        .main { display:grid; grid-template-columns:270px 1fr 330px; grid-template-rows:1fr 1fr; gap:10px; padding:10px; flex:1; overflow:hidden; min-height:0; }
+        .panel { background:var(--panel); border:1px solid var(--border); border-radius:14px; box-shadow:0 0 18px var(--glow-s),inset 0 1px 0 rgba(168,85,247,0.08); display:flex; flex-direction:column; overflow:hidden; }
+        .panel-header { background:linear-gradient(135deg,#1c0a4a,#0e0e22); border-bottom:1px solid var(--border); color:var(--purple-l); padding:9px 14px; font-size:12px; font-weight:800; letter-spacing:1px; text-transform:uppercase; text-shadow:0 0 12px var(--glow); flex-shrink:0; display:flex; align-items:center; justify-content:space-between; }
+        .panel-body { flex:1; overflow-y:auto; padding:12px; min-height:0; }
+        .panel-bottom { grid-column:1/-1; }
+        ::-webkit-scrollbar { width:4px; }
+        ::-webkit-scrollbar-track { background:transparent; }
+        ::-webkit-scrollbar-thumb { background:var(--purple); border-radius:4px; }
+        input,textarea,select { background:var(--inp); border:1px solid var(--inp-border); border-radius:8px; color:var(--text); font-size:13px; font-family:inherit; padding:8px 10px; width:100%; outline:none; transition:border-color 0.2s,box-shadow 0.2s; }
+        input:focus,textarea:focus,select:focus { border-color:var(--purple-l); box-shadow:0 0 10px var(--glow); }
+        textarea { resize:vertical; }
+        select option { background:#1a1930; }
+        label { display:block; font-size:11px; color:var(--muted); margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px; }
+        .fg { margin-bottom:9px; }
+        .fg2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+        .btn { border:none; border-radius:8px; cursor:pointer; font-size:13px; font-family:inherit; font-weight:700; padding:8px 16px; transition:all 0.18s; display:inline-flex; align-items:center; justify-content:center; gap:6px; }
+        .btn-primary { background:linear-gradient(135deg,var(--purple),#4c1d95); color:#fff; border:1px solid var(--purple-l); box-shadow:0 0 10px var(--glow-s); }
+        .btn-primary:hover { box-shadow:0 0 22px var(--glow); transform:translateY(-1px); }
+        .btn-success { background:linear-gradient(135deg,#059669,#065f46); color:#fff; border:1px solid var(--ok); box-shadow:0 0 10px rgba(16,185,129,0.2); }
+        .btn-success:hover { box-shadow:0 0 20px rgba(16,185,129,0.45); transform:translateY(-1px); }
+        .btn-danger { background:linear-gradient(135deg,#dc2626,#991b1b); color:#fff; border:1px solid var(--err); }
+        .btn-danger:hover { box-shadow:0 0 16px rgba(239,68,68,0.45); transform:translateY(-1px); }
+        .btn-ghost { background:transparent; color:var(--muted); border:1px solid #2e2b50; }
+        .btn-ghost:hover { border-color:var(--purple-l); color:var(--purple-l); background:var(--glow-s); }
+        .btn-sm { padding:4px 10px; font-size:12px; }
+        .btn-full { width:100%; }
+        .btn:disabled { opacity:0.35; cursor:not-allowed; transform:none !important; box-shadow:none !important; }
+        #accounts-list { display:flex; flex-direction:column; gap:7px; }
+        .account-item { background:#14142e; border:1px solid var(--border); border-left:3px solid var(--border); border-radius:10px; padding:9px 11px; transition:border-color 0.3s,box-shadow 0.3s; }
+        .account-item.connected { border-left-color:var(--ok); box-shadow:0 0 10px rgba(16,185,129,0.12); }
+        .account-item.pending { border-left-color:var(--warn); }
+        .account-item.error { border-left-color:var(--err); }
+        .account-row { display:flex; align-items:center; gap:8px; }
+        .dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; background:var(--dim); }
+        .dot.connected { background:var(--ok); box-shadow:0 0 6px var(--ok); }
+        .dot.pending { background:var(--warn); }
+        .dot.error { background:var(--err); }
+        .account-name { font-size:13px; font-weight:700; flex:1; }
+        .account-status-text { font-size:11px; color:var(--muted); margin-top:3px; margin-left:15px; }
+        .pair-code-box { background:#1a0d40; border:1px solid var(--purple); border-radius:8px; padding:12px; margin-top:8px; text-align:center; }
+        .pair-code-box img { border-radius:6px; }
+        .pair-code-hint { font-size:11px; color:var(--muted); text-align:center; margin-top:4px; }
+        .add-acc { border-top:1px solid var(--border); padding:11px 12px; flex-shrink:0; }
+        .add-acc-title { font-size:11px; color:var(--muted); margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px; }
+        #messages-list { display:flex; flex-direction:column; gap:8px; }
+        .msg-card { background:#14142e; border:1px solid var(--border); border-radius:10px; padding:10px 12px; cursor:pointer; transition:border-color 0.2s,box-shadow 0.2s; }
+        .msg-card:hover { border-color:var(--purple); box-shadow:0 0 10px var(--glow-s); }
+        .msg-card-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:5px; }
+        .msg-title { font-size:13px; font-weight:700; color:var(--purple-l); }
+        .msg-preview { font-size:12px; color:var(--muted); white-space:pre-wrap; word-break:break-word; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; max-height:36px; }
+        .msg-actions { display:flex; gap:4px; }
+        .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:200; align-items:center; justify-content:center; backdrop-filter:blur(5px); }
+        .modal-overlay.active { display:flex; }
+        .modal { background:var(--panel2); border:1px solid var(--purple); border-radius:16px; padding:24px; width:480px; max-width:92vw; box-shadow:0 0 50px var(--glow),0 0 100px rgba(124,58,237,0.15); animation:pop 0.18s ease; }
+        @keyframes pop { from{transform:scale(0.93);opacity:0} to{transform:scale(1);opacity:1} }
+        .modal-title { font-size:15px; font-weight:800; color:var(--purple-xl); text-shadow:0 0 12px var(--glow); margin-bottom:16px; }
+        .modal-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:14px; }
+        .msg-preview-box { background:var(--inp); border:1px solid var(--inp-border); border-radius:8px; padding:10px; font-size:12px; color:var(--muted); min-height:54px; max-height:90px; overflow-y:auto; white-space:pre-wrap; word-break:break-word; margin-bottom:9px; }
+        .stats-bar { display:flex; gap:18px; padding:7px 14px; background:#0a0a16; border-bottom:1px solid var(--border); flex-shrink:0; align-items:center; }
+        .stat { font-size:12px; display:flex; align-items:center; gap:5px; }
+        .stat-n { font-weight:800; color:var(--purple-xl); }
+        .stat-l { color:var(--muted); }
+        .prog-wrap { flex:1; }
+        .prog-track { background:#1a1930; border-radius:4px; height:5px; overflow:hidden; }
+        .prog-fill { height:100%; background:linear-gradient(90deg,var(--purple),var(--purple-xl)); box-shadow:0 0 8px var(--glow); transition:width 0.35s; width:0%; }
+        .log-wrap { font-family:'Consolas',monospace; font-size:12px; height:100%; overflow-y:auto; }
+        .le { padding:2px 0; border-bottom:1px solid #12122a; line-height:1.45; }
+        .le.ok { color:var(--ok); }
+        .le.err { color:var(--err); }
+        .le.info { color:var(--purple-l); }
+        .le.warn { color:var(--warn); }
+        .le.pause { color:#60a5fa; }
+        .le.skip { color:#60a5fa; }
+        .le.spam { color:#ff6b6b; font-weight:700; background:rgba(239,68,68,0.1); padding:4px 6px; border-radius:4px; border-left:3px solid var(--err); }
+        .empty { text-align:center; padding:24px 12px; color:var(--dim); font-size:13px; }
+        .empty-icon { font-size:34px; margin-bottom:8px; }
+        .divider { height:1px; background:linear-gradient(to right,transparent,var(--border),transparent); margin:8px 0; }
+        .tabs { display:flex; gap:2px; padding:0 10px; background:#0a0a16; border-bottom:1px solid var(--border); flex-shrink:0; }
+        .tab { padding:7px 14px; font-size:12px; font-weight:700; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; transition:all 0.2s; text-transform:uppercase; letter-spacing:0.5px; }
+        .tab:hover { color:var(--purple-l); }
+        .tab.active { color:var(--purple-xl); border-bottom-color:var(--purple); }
+        .tab-content { display:none; flex:1; overflow:hidden; flex-direction:column; }
+        .tab-content.active { display:flex; }
+        .sent-item { display:flex; align-items:center; gap:8px; padding:4px 0; border-bottom:1px solid #12122a; font-size:12px; }
+        .sent-item .sent-num { font-family:'Consolas',monospace; color:var(--text); flex:1; }
+        .sent-item .sent-acc { color:var(--muted); font-size:11px; }
+        .sent-item .sent-status { font-size:11px; font-weight:700; }
+        .sent-item .sent-status.ok { color:var(--ok); }
+        .sent-item .sent-status.err { color:var(--err); }
+        .sent-item .sent-date { color:var(--dim); font-size:10px; }
+        .note-item { background:#14142e; border:1px solid var(--border); border-radius:8px; padding:8px 10px; margin-bottom:6px; }
+        .note-item .note-text { font-size:12px; color:var(--text); white-space:pre-wrap; word-break:break-word; }
+        .note-item .note-footer { display:flex; justify-content:space-between; align-items:center; margin-top:5px; }
+        .note-item .note-date { font-size:10px; color:var(--dim); }
+        .proxy-form { padding:12px; }
+        .proxy-status { display:flex; align-items:center; gap:6px; margin-bottom:10px; padding:8px; border-radius:8px; font-size:12px; font-weight:700; }
+        .proxy-status.on { background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); color:var(--ok); }
+        .proxy-status.off { background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:var(--err); }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div class="header-icon">&#x1F4AC;</div>
+    <div>
+        <h1>WhatsApp Mesaj G&#246;ndericisi</h1>
+        <div class="header-sub">&#199;oklu hesap &#8226; Kay&#305;tl&#305; mesajlar &#8226; Toplu g&#246;nderim</div>
+    </div>
+</div>
+
+<div class="main">
+
+    <div class="panel">
+        <div class="panel-header">
+            <span>&#9889; Hesaplar</span>
+            <span id="acc-count" style="font-size:11px;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">0 hesap</span>
+        </div>
+        <div class="panel-body">
+            <div id="accounts-list">
+                <div class="empty"><div class="empty-icon">&#x1F4F1;</div>Hen&#252;z hesap eklenmedi</div>
+            </div>
+        </div>
+        <div class="add-acc">
+            <div class="add-acc-title">Yeni Hesap Ekle</div>
+            <div class="fg">
+                <label>&#304;sim</label>
+                <input type="text" id="acc-name" placeholder="Numara 1, Kampanya, vb.">
+            </div>
+            <button class="btn btn-primary btn-full" onclick="addAccount()">&#10133; Hesap Ekle</button>
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-header">
+            <span>&#x1F4DD; Kay&#305;tl&#305; Mesajlar</span>
+            <button class="btn btn-primary btn-sm" onclick="openMsgModal()">+ Yeni</button>
+        </div>
+        <div class="panel-body">
+            <div id="messages-list">
+                <div class="empty">
+                    <div class="empty-icon">&#x2709;&#xFE0F;</div>
+                    Kay&#305;tl&#305; mesaj yok<br>
+                    <small style="color:var(--dim)">"Yeni" butonuyla ekleyin</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-header"><span>&#x1F680; G&#246;nderim</span></div>
+        <div class="panel-body">
+            <div class="fg">
+                <label>G&#246;nderilecek Mesajlar <small id="sel-msg-count" style="color:var(--purple-l);float:right;">0 se&#231;ili</small></label>
+                <div id="msg-checklist" style="max-height:100px;overflow-y:auto;background:var(--inp);border:1px solid var(--inp-border);border-radius:8px;padding:6px;">
+                    <div style="color:var(--dim);font-size:12px;padding:4px;">Mesaj kaydedilmemi&#351;</div>
+                </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:9px;background:var(--inp);border:1px solid var(--inp-border);border-radius:8px;padding:6px 10px;">
+                <span style="font-size:11px;color:var(--muted);margin-right:4px;">Mod:</span>
+                <label style="flex:1;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;padding:5px 8px;border-radius:6px;font-size:12px;font-weight:600;transition:all 0.2s;" id="mode-label-seq" onclick="setMsgMode('sequential')">
+                    <input type="radio" name="msg-mode" value="sequential" checked style="display:none;">
+                    <span style="font-size:13px;">&#x1F4CB;</span> S&#305;ral&#305;
+                </label>
+                <label style="flex:1;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;padding:5px 8px;border-radius:6px;font-size:12px;font-weight:600;transition:all 0.2s;" id="mode-label-rand" onclick="setMsgMode('random')">
+                    <input type="radio" name="msg-mode" value="random" style="display:none;">
+                    <span style="font-size:13px;">&#x1F3B2;</span> Rastgele
+                </label>
+            </div>
+            <div class="divider"></div>
+            <div class="fg">
+                <label>Numara Listesi <small style="color:var(--dim)">(her sat&#305;ra bir numara)</small></label>
+                <textarea id="numbers" rows="5" placeholder="905551234567&#10;905559876543&#10;..."></textarea>
+            </div>
+            <div class="divider"></div>
+            <div class="fg2">
+                <div class="fg"><label>Min Bekleme (sn)</label><input type="number" id="d-min" value="15" min="1"></div>
+                <div class="fg"><label>Max Bekleme (sn)</label><input type="number" id="d-max" value="45" min="2"></div>
+            </div>
+            <div class="fg2">
+                <div class="fg"><label>Burst (ka&#231; mesajda)</label><input type="number" id="b-count" value="10" min="1"></div>
+                <div class="fg"><label>Burst Molas&#305; (dk)</label><input type="number" id="b-pause" value="5" min="1"></div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:6px;">
+                <button class="btn btn-success btn-full" id="btn-send" onclick="startSend()">&#x25B6; Ba&#351;lat</button>
+                <button class="btn btn-danger" id="btn-stop" onclick="stopSend()" disabled style="min-width:90px;">&#x23F9; Durdur</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="panel panel-bottom">
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('log')">&#x1F4CB; Log</div>
+            <div class="tab" onclick="switchTab('sent')">&#x1F4E8; G&#246;nderilenler</div>
+            <div class="tab" onclick="switchTab('replies')">&#x1F4E9; D&#246;n&#252;&#351;ler <span id="reply-badge" style="background:var(--err);color:#fff;font-size:9px;padding:1px 6px;border-radius:8px;margin-left:2px;display:none;">0</span></div>
+            <div class="tab" onclick="switchTab('notes')">&#x1F4DD; Notlar</div>
+            <div class="tab" onclick="switchTab('proxy')">&#x1F510; Proxy</div>
+        </div>
+
+        <div class="tab-content active" id="tc-log">
+            <div class="stats-bar">
+                <div class="stat"><span class="stat-l">&#304;lerleme:</span><span class="stat-n" id="s-prog">0 / 0</span></div>
+                <div class="stat"><span class="stat-l">Ba&#351;ar&#305;l&#305;:</span><span class="stat-n" id="s-ok" style="color:var(--ok)">0</span></div>
+                <div class="stat"><span class="stat-l">Hatal&#305;:</span><span class="stat-n" id="s-err" style="color:var(--err)">0</span></div>
+                <div class="prog-wrap">
+                    <div class="prog-track"><div class="prog-fill" id="prog-fill"></div></div>
+                </div>
+                <button class="btn btn-ghost btn-sm" onclick="clearLog()">&#x1F5D1; Temizle</button>
+            </div>
+            <div class="panel-body" style="padding:8px 12px;">
+                <div class="log-wrap" id="log"></div>
+            </div>
+        </div>
+
+        <div class="tab-content" id="tc-sent">
+            <div class="stats-bar">
+                <div class="stat"><span class="stat-l">Toplam:</span><span class="stat-n" id="sent-total">0</span></div>
+                <div class="stat"><span class="stat-l">Ba&#351;ar&#305;l&#305;:</span><span class="stat-n" id="sent-ok" style="color:var(--ok)">0</span></div>
+                <div class="stat"><span class="stat-l">Hatal&#305;:</span><span class="stat-n" id="sent-err" style="color:var(--err)">0</span></div>
+                <div style="flex:1"></div>
+                <span style="font-size:10px;color:var(--dim)">&#x1F512; Bu kay&#305;tlar silinemez</span>
+            </div>
+            <div class="panel-body" style="padding:8px 12px;">
+                <div id="sent-list" style="font-family:'Consolas',monospace;font-size:12px;"></div>
+            </div>
+        </div>
+
+        <div class="tab-content" id="tc-replies">
+            <div class="stats-bar">
+                <div class="stat"><span class="stat-l">Toplam D&#246;n&#252;&#351;:</span><span class="stat-n" id="replies-total" style="color:var(--ok)">0</span></div>
+                <div style="flex:1"></div>
+                <button class="btn btn-ghost btn-sm" onclick="loadReplies()">&#x1F504; Yenile</button>
+            </div>
+            <div class="panel-body" style="padding:8px 12px;">
+                <div id="replies-list" style="font-family:'Consolas',monospace;font-size:12px;"></div>
+            </div>
+        </div>
+
+        <div class="tab-content" id="tc-notes">
+            <div style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;gap:6px;flex-shrink:0;">
+                <textarea id="note-input" rows="2" placeholder="Not yaz&#305;n..." style="flex:1;resize:none;"></textarea>
+                <button class="btn btn-primary btn-sm" onclick="saveNote()" style="align-self:flex-end;">Kaydet</button>
+            </div>
+            <div class="panel-body" style="padding:8px 12px;">
+                <div id="notes-list"></div>
+            </div>
+        </div>
+
+        <div class="tab-content" id="tc-proxy" style="overflow-y:auto;">
+            <div class="panel-body">
+                <div class="proxy-form">
+
+                    <!-- Tor VPN B&#246;l&#252;m&#252; -->
+                    <div id="tor-section" style="margin-bottom:14px;padding:10px;border-radius:8px;border:1px solid rgba(139,92,246,0.3);background:rgba(139,92,246,0.05);">
+                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                            <span style="font-size:16px;">&#x1F512;</span>
+                            <strong style="color:var(--purple);font-size:13px;">Tor VPN</strong>
+                            <span id="tor-badge" style="font-size:10px;padding:2px 8px;border-radius:10px;font-weight:700;background:rgba(239,68,68,0.15);color:var(--err);">KAPALI</span>
+                        </div>
+                        <div style="font-size:11px;color:var(--dim);margin-bottom:8px;line-height:1.5;">
+                            &#220;cretsiz anonim VPN. Tor SOCKS5 proxy (127.0.0.1:9050) &#252;zerinden &#231;al&#305;&#351;&#305;r.
+                        </div>
+                        <div style="display:flex;gap:8px;">
+                            <button class="btn btn-success btn-full" onclick="torStart()" id="tor-start-btn">&#x1F680; Tor A&#231;</button>
+                            <button class="btn btn-primary" onclick="torNewIp()" id="tor-newip-btn" disabled style="min-width:100px;">&#x1F504; Yeni IP</button>
+                            <button class="btn btn-danger" onclick="torStop()" id="tor-stop-btn" disabled style="min-width:80px;">&#x23F9; Kapat</button>
+                        </div>
+                        <div id="tor-msg" style="margin-top:6px;font-size:11px;color:var(--dim);display:none;"></div>
+                        <div id="tor-download-section" style="display:none;margin-top:8px;padding:8px;border-radius:6px;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);">
+                            <div style="font-size:12px;color:var(--warn);margin-bottom:6px;">&#x26A0; Tor bulunamad&#305;</div>
+                            <button class="btn btn-primary btn-full" onclick="torDownload()" id="tor-download-btn">&#x1F4E5; Tor &#304;ndir (~15MB)</button>
+                            <div id="tor-download-msg" style="margin-top:4px;font-size:11px;color:var(--dim);"></div>
+                        </div>
+                    </div>
+
+                    <hr style="border:none;border-top:1px solid var(--border);margin:10px 0;">
+
+                    <!-- Proxy Durumu -->
+                    <div class="proxy-status off" id="proxy-status">&#x26A0; Proxy kapal&#305; &#8212; Kendi IP adresiniz kullan&#305;l&#305;yor</div>
+
+                    <!-- Proxy Tipi + Host/Port -->
+                    <div class="fg2" style="grid-template-columns:1fr 2fr 1fr;">
+                        <div class="fg"><label>Proxy Tipi</label>
+                            <select id="proxy-type" style="padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:12px;">
+                                <option value="http">HTTP</option>
+                                <option value="https">HTTPS</option>
+                                <option value="socks5">SOCKS5</option>
+                            </select>
+                        </div>
+                        <div class="fg"><label>Proxy Host</label><input type="text" id="proxy-host" placeholder="1.2.3.4 veya proxy.example.com"></div>
+                        <div class="fg"><label>Port</label><input type="text" id="proxy-port" placeholder="8080"></div>
+                    </div>
+                    <div class="fg2">
+                        <div class="fg"><label>Kullan&#305;c&#305; Ad&#305; <small style="color:var(--dim)">(opsiyonel)</small></label><input type="text" id="proxy-user" placeholder="user123"></div>
+                        <div class="fg"><label>&#350;ifre <small style="color:var(--dim)">(opsiyonel)</small></label><input type="password" id="proxy-pass" placeholder="****"></div>
+                    </div>
+                    <div style="display:flex;gap:8px;margin-top:4px;">
+                        <button class="btn" id="test-proxy-btn" onclick="testProxy()" style="flex:1;background:rgba(139,92,246,0.15);color:var(--purple);border:1px solid rgba(139,92,246,0.3);">&#x1F50D; Test Et</button>
+                        <button class="btn btn-success" id="proxy-enable-btn" onclick="saveProxy(true)" disabled style="flex:1;opacity:0.4;">&#x2705; Proxy A&#231;</button>
+                        <button class="btn btn-danger" onclick="saveProxy(false)" style="min-width:100px;">&#x274C; Kapat</button>
+                    </div>
+
+                    <!-- Test Sonucu -->
+                    <div id="proxy-test-result" style="margin-top:8px;font-size:11px;display:none;padding:8px;border-radius:6px;line-height:1.5;"></div>
+
+                    <div style="margin-top:10px;font-size:11px;color:var(--dim);line-height:1.6;">
+                        &#x1F4A1; <strong>Not:</strong> Proxy de&#287;i&#351;ikli&#287;i yeni eklenen hesaplar i&#231;in ge&#231;erlidir.<br>
+                        Mevcut ba&#287;l&#305; hesaplar&#305; &#231;&#305;kar&#305;p tekrar ekleyin.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<div class="modal-overlay" id="msg-modal">
+    <div class="modal">
+        <div class="modal-title" id="modal-title">Yeni Mesaj</div>
+        <input type="hidden" id="modal-mid">
+        <div class="fg">
+            <label>Ba&#351;l&#305;k</label>
+            <input type="text" id="modal-mtitle" placeholder="Mesaj ba&#351;l&#305;&#287;&#305;">
+        </div>
+        <div class="fg">
+            <label>Mesaj &#304;&#231;eri&#287;i</label>
+            <textarea id="modal-mcontent" rows="7" placeholder="G&#246;nderilecek mesaj i&#231;eri&#287;i..."></textarea>
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-ghost" onclick="closeMsgModal()">&#304;ptal</button>
+            <button class="btn btn-primary" onclick="saveMsg()">&#x1F4BE; Kaydet</button>
+        </div>
+    </div>
+</div>
+
+<script>
+var socket = io();
+var accounts = {};
+var messages = [];
+var sentLogData = [];
+var proxyVerified = false;
+var notesData = [];
+var isSending = false;
+
+// ── Tabs ────────────────────────────────────────────────
+function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+    document.querySelectorAll('.tab-content').forEach(function(t) { t.classList.remove('active'); });
+    document.getElementById('tc-' + name).classList.add('active');
+    var tabs = document.querySelectorAll('.tab');
+    var map = { log: 0, sent: 1, replies: 2, notes: 3, proxy: 4 };
+    if (map[name] !== undefined) tabs[map[name]].classList.add('active');
+}
+
+// ── Socket Events ───────────────────────────────────────
+socket.on('account-update', function(data) {
+    if (!accounts[data.id]) accounts[data.id] = {};
+    for (var k in data) accounts[data.id][k] = data[k];
+    renderAccounts();
+});
+socket.on('account-removed', function(d) { delete accounts[d.id]; renderAccounts(); });
+socket.on('pairing-error', function(d) { log('Hata (' + d.id + '): ' + d.error, 'err'); });
+socket.on('qr-code', function(d) {
+    if (!accounts[d.id]) accounts[d.id] = { id: d.id, status: 'qr-bekleniyor', name: d.id };
+    accounts[d.id].qrImage = d.qr;
+    renderAccounts();
+    log('QR kod haz\u0131r (' + d.id + ') \u2014 WhatsApp ile taray\u0131n', 'info');
+});
+socket.on('qr-done', function(d) {
+    if (accounts[d.id]) accounts[d.id].qrImage = null;
+    renderAccounts();
+    log('Hesap ba\u011Fland\u0131: ' + d.id, 'info');
+});
+socket.on('spam-detected', function(d) {
+    log('\ud83d\udeab WHATSAPP SPAM ENGEL\u0130 ALDI! Hesap: ' + d.id + ' \u2014 Hesap otomatik \u00e7\u0131kar\u0131ld\u0131', 'spam');
+});
+
+socket.on('send-started', function(d) {
+    isSending = true; setSendBtns();
+    setStat(0, d.total, 0, 0);
+    log('G\u00F6nderim ba\u015Flad\u0131 \u2014 ' + d.total + ' numara', 'info');
+});
+socket.on('send-progress', function(data) {
+    var ok = data.status === 'ba\u015Far\u0131l\u0131';
+    var skip = data.status === 'atland\u0131';
+    if (skip) {
+        log('\u23ED ' + data.number + '  atland\u0131 \u2014 ' + (data.error || ''), 'skip');
+    } else {
+        log((ok ? '\u2713' : '\u2717') + ' ' + data.number + '  via ' + data.accountName + (!ok ? '  ' + (data.error || '') : ''), ok ? 'ok' : 'err');
+    }
+    setStat(data.index, data.total, data.successCount, data.errorCount);
+});
+socket.on('send-log', function(d) {
+    log(d.text, d.type || 'info');
+});
+socket.on('send-pause', function(d) {
+    setStat(d.index, d.total);
+    log('\u23F8 ' + d.seconds + 'sn mola...', 'pause');
+});
+socket.on('send-complete', function(d) {
+    isSending = false; setSendBtns();
+    setStat(d.total, d.total, d.successCount, d.errorCount);
+    var msg = 'Tamamland\u0131 \u2014 Ba\u015Far\u0131l\u0131: ' + d.successCount + '  Hatal\u0131: ' + d.errorCount;
+    if (d.skippedCount) msg += '  Atlanan: ' + d.skippedCount;
+    log(msg, 'info');
+});
+socket.on('send-stopped', function(d) {
+    isSending = false; setSendBtns();
+    log('Durduruldu \u2014 ' + d.index + '/' + d.total, 'warn');
+});
+socket.on('sent-log-update', function(data) {
+    sentLogData = data;
+    renderSentLog();
+});
+socket.on('reply-received', function(r) {
+    repliesData.push(r);
+    renderReplies();
+    log('\u{1F4E9} D\u00F6n\u00FC\u015F: ' + r.number + (r.name ? ' (' + r.name + ')' : '') + ' \u2014 ' + r.message.substring(0, 60), 'info');
+    if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification('D\u00F6n\u00FC\u015F Var!', { body: (r.name || r.number) + ' mesaj g\u00F6nderdi:\n' + r.message.substring(0, 100), icon: 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>\u{1F4E9}</text></svg>' });
+    }
+});
+
+function loadAccounts() {
+    fetch('/api/accounts').then(function(r){return r.json()}).then(function(list) {
+        accounts = {};
+        list.forEach(function(a) { accounts[a.id] = a; });
+        renderAccounts();
+    });
+}
+
+function renderAccounts() {
+    var el = document.getElementById('accounts-list');
+    var ids = Object.keys(accounts);
+    document.getElementById('acc-count').textContent = ids.length + ' hesap';
+    if (!ids.length) {
+        el.innerHTML = '<div class="empty"><div class="empty-icon">\u{1F4F1}</div>Hen\u00FCz hesap eklenmedi</div>';
+        return;
+    }
+    el.innerHTML = ids.map(function(id) {
+        var a = accounts[id];
+        var cls = a.status === 'ba\u011Fl\u0131' ? 'connected'
+                : (a.status === 'hata' || a.status === 'auth-hatas\u0131') ? 'error' : 'pending';
+        var qrHtml = a.qrImage
+            ? '<div class="pair-code-box"><img src="' + a.qrImage + '" width="200" height="200" alt="QR Kod"></div><div class="pair-code-hint">WhatsApp > Ba\u011Fl\u0131 Cihazlar > QR Tara</div>' : '';
+        return '<div class="account-item ' + cls + '"><div class="account-row"><div class="dot ' + cls + '"></div><div class="account-name">' + esc(a.name || id) + '</div><button class="btn btn-ghost btn-sm" onclick="removeAccount(\'' + esc(id) + '\')">' + '\u2715</button></div><div class="account-status-text">' + esc(a.status) + '</div>' + qrHtml + '</div>';
+    }).join('');
+}
+
+function addAccount() {
+    var name = document.getElementById('acc-name').value.trim();
+    if (!name) { flash('acc-name'); return; }
+    fetch('/api/accounts', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: name })
+    }).then(function(r){return r.json()}).then(function(data) {
+        if (data.error) { alert(data.error); return; }
+        var accId = data.id;
+        accounts[accId] = { id: accId, status: 'ba\u015Flat\u0131l\u0131yor', name: accId };
+        renderAccounts();
+        document.getElementById('acc-name').value = '';
+        log('Hesap eklendi: ' + accId + ' \u2014 QR kod bekleniyor...', 'info');
+    });
+}
+
+function removeAccount(id) {
+    if (!confirm(id + ' hesab\u0131n\u0131 silmek istiyor musunuz?')) return;
+    fetch('/api/accounts/' + encodeURIComponent(id), { method: 'DELETE' }).then(function() {
+        delete accounts[id]; renderAccounts();
+        log('Hesap silindi: ' + id, 'warn');
+    });
+}
+
+function loadMessages() {
+    fetch('/api/messages').then(function(r){return r.json()}).then(function(list) {
+        messages = list;
+        renderMessages(); updateMsgChecklist();
+    });
+}
+
+function renderMessages() {
+    var el = document.getElementById('messages-list');
+    if (!messages.length) {
+        el.innerHTML = '<div class="empty"><div class="empty-icon">\u2709\uFE0F</div>Kay\u0131tl\u0131 mesaj yok<br><small style="color:var(--dim)">Yeni butonuyla ekleyin</small></div>';
+        return;
+    }
+    el.innerHTML = messages.map(function(m) {
+        return '<div class="msg-card"><div class="msg-card-head"><div class="msg-title">' + esc(m.title) + '</div><div class="msg-actions"><button class="btn btn-ghost btn-sm" onclick="editMsg(' + m.id + ')" title="D\u00FCzenle">\u270F\uFE0F</button><button class="btn btn-ghost btn-sm" onclick="deleteMsg(' + m.id + ')" title="Sil">\u{1F5D1}\uFE0F</button></div></div><div class="msg-preview">' + esc(m.content) + '</div></div>';
+    }).join('');
+}
+
+function updateMsgChecklist() {
+    var el = document.getElementById('msg-checklist');
+    if (!messages.length) {
+        el.innerHTML = '<div style="color:var(--dim);font-size:12px;padding:4px;">Mesaj kaydedilmemi\u015f</div>';
+        updateMsgCount();
+        return;
+    }
+    el.innerHTML = messages.map(function(m) {
+        return '<label class="msg-chk-item" style="display:flex;align-items:center;gap:10px;padding:7px 10px;margin-bottom:4px;border-radius:8px;cursor:pointer;font-size:12px;background:#14142e;border:1px solid var(--border);transition:all 0.2s;" onmouseover="this.style.borderColor=\'var(--purple)\';this.style.boxShadow=\'0 0 8px rgba(124,58,237,0.2)\'" onmouseout="if(!this.querySelector(\'input\').checked){this.style.borderColor=\'var(--border)\';this.style.boxShadow=\'none\'}">' +
+            '<input type="checkbox" class="msg-check" value="' + m.id + '" onchange="updateMsgCount();updateCheckStyles()" style="accent-color:var(--purple);width:16px;height:16px;flex-shrink:0;cursor:pointer;">' +
+            '<span style="color:var(--purple-l);font-weight:700;font-size:13px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(m.title) + '</span>' +
+            '</label>';
+    }).join('');
+    updateMsgCount();
+}
+
+function updateMsgCount() {
+    var checks = document.querySelectorAll('.msg-check:checked');
+    document.getElementById('sel-msg-count').textContent = checks.length + ' se\u00e7ili';
+}
+
+function updateCheckStyles() {
+    document.querySelectorAll('.msg-chk-item').forEach(function(label) {
+        var cb = label.querySelector('input');
+        if (cb.checked) {
+            label.style.borderColor = 'var(--purple)';
+            label.style.background = 'rgba(124,58,237,0.12)';
+            label.style.boxShadow = '0 0 8px rgba(124,58,237,0.2)';
+        } else {
+            label.style.borderColor = 'var(--border)';
+            label.style.background = '#14142e';
+            label.style.boxShadow = 'none';
+        }
+    });
+}
+
+function getSelectedMessages() {
+    var checks = document.querySelectorAll('.msg-check:checked');
+    var result = [];
+    checks.forEach(function(cb) {
+        var id = parseInt(cb.value);
+        var m = messages.find(function(x) { return x.id === id; });
+        if (m) result.push(m.content);
+    });
+    return result;
+}
+
+function getMessageMode() {
+    var radios = document.querySelectorAll('input[name="msg-mode"]');
+    for (var i = 0; i < radios.length; i++) {
+        if (radios[i].checked) return radios[i].value;
+    }
+    return 'sequential';
+}
+
+function setMsgMode(mode) {
+    var radios = document.querySelectorAll('input[name="msg-mode"]');
+    radios.forEach(function(r) { r.checked = r.value === mode; });
+    updateModeStyles();
+}
+
+function updateModeStyles() {
+    var mode = getMessageMode();
+    var seq = document.getElementById('mode-label-seq');
+    var rand = document.getElementById('mode-label-rand');
+    if (mode === 'sequential') {
+        seq.style.background = 'linear-gradient(135deg,var(--purple),#4c1d95)';
+        seq.style.color = '#fff';
+        seq.style.boxShadow = '0 0 10px var(--glow-s)';
+        rand.style.background = 'transparent';
+        rand.style.color = 'var(--muted)';
+        rand.style.boxShadow = 'none';
+    } else {
+        rand.style.background = 'linear-gradient(135deg,var(--purple),#4c1d95)';
+        rand.style.color = '#fff';
+        rand.style.boxShadow = '0 0 10px var(--glow-s)';
+        seq.style.background = 'transparent';
+        seq.style.color = 'var(--muted)';
+        seq.style.boxShadow = 'none';
+    }
+}
+
+function openMsgModal() {
+    document.getElementById('modal-title').textContent = 'Yeni Mesaj';
+    document.getElementById('modal-mid').value = '';
+    document.getElementById('modal-mtitle').value = '';
+    document.getElementById('modal-mcontent').value = '';
+    document.getElementById('msg-modal').classList.add('active');
+}
+
+function editMsg(id) {
+    var m = messages.find(function(x) { return x.id === id; });
+    if (!m) return;
+    document.getElementById('modal-title').textContent = 'Mesaj\u0131 D\u00FCzenle';
+    document.getElementById('modal-mid').value = m.id;
+    document.getElementById('modal-mtitle').value = m.title;
+    document.getElementById('modal-mcontent').value = m.content;
+    document.getElementById('msg-modal').classList.add('active');
+}
+
+function closeMsgModal() { document.getElementById('msg-modal').classList.remove('active'); }
+
+function saveMsg() {
+    var id = document.getElementById('modal-mid').value;
+    var title = document.getElementById('modal-mtitle').value.trim();
+    var content = document.getElementById('modal-mcontent').value.trim();
+    if (!title) { flash('modal-mtitle'); return; }
+    if (!content) { flash('modal-mcontent'); return; }
+    var url = id ? '/api/messages/' + id : '/api/messages';
+    var method = id ? 'PUT' : 'POST';
+    fetch(url, { method: method, headers: {'Content-Type':'application/json'}, body: JSON.stringify({ title: title, content: content }) })
+    .then(function(r){return r.json()}).then(function(data) {
+        if (data.error) { alert(data.error); return; }
+        closeMsgModal(); loadMessages();
+        log(id ? 'Mesaj g\u00FCncellendi: ' + title : 'Yeni mesaj kaydedildi: ' + title, 'info');
+    });
+}
+
+function deleteMsg(id) {
+    var m = messages.find(function(x) { return x.id === id; });
+    if (!confirm((m ? m.title : '') + ' mesaj\u0131n\u0131 silmek istiyor musunuz?')) return;
+    fetch('/api/messages/' + id, { method: 'DELETE' }).then(function() {
+        loadMessages();
+        log('Mesaj silindi: ' + (m ? m.title : ''), 'warn');
+    });
+}
+
+function startSend() {
+    // Proxy açıksa test edilmiş olmalı
+    fetch('/api/proxy').then(function(r){return r.json()}).then(function(pc) {
+        if (pc.enabled && !proxyVerified) {
+            alert('Proxy aktif ama hen\u00FCz test edilmedi!\nProxy sekmesinden \"Test Et\" butonuna bas\u0131n.');
+            switchTab('proxy');
+            return;
+        }
+        doStartSend();
+    }).catch(function() { doStartSend(); });
+}
+
+function doStartSend() {
+    var selectedMsgs = getSelectedMessages();
+    if (!selectedMsgs.length) { alert('L\u00fctfen en az bir mesaj se\u00e7in'); return; }
+    var raw = document.getElementById('numbers').value;
+    var numbers = raw.split('\n').map(function(n){return n.trim()}).filter(function(n){return n.length > 0});
+    if (!numbers.length) { alert('Numara listesi bo\u015F'); return; }
+    var dMin = parseInt(document.getElementById('d-min').value) * 1000;
+    var dMax = parseInt(document.getElementById('d-max').value) * 1000;
+    var bCount = parseInt(document.getElementById('b-count').value);
+    var bPause = parseInt(document.getElementById('b-pause').value) * 60000;
+    var mode = getMessageMode();
+    fetch('/api/send', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ numbers: numbers, messages: selectedMsgs, messageMode: mode, delayMin: dMin, delayMax: dMax, burstCount: bCount, burstPause: bPause })
+    }).then(function(r){return r.json()}).then(function(data) {
+        if (data.error) alert(data.error);
+    });
+}
+
+function stopSend() { fetch('/api/stop', { method: 'POST' }); }
+
+function setSendBtns() {
+    document.getElementById('btn-send').disabled = isSending;
+    document.getElementById('btn-stop').disabled = !isSending;
+}
+
+function setStat(done, total, ok, err) {
+    document.getElementById('s-prog').textContent = (done != null ? done : '?') + ' / ' + (total != null ? total : '?');
+    if (ok !== undefined) document.getElementById('s-ok').textContent = ok;
+    if (err !== undefined) document.getElementById('s-err').textContent = err;
+    var pct = total > 0 ? (done / total * 100) : 0;
+    document.getElementById('prog-fill').style.width = pct + '%';
+}
+
+function log(text, cls) {
+    var el = document.getElementById('log');
+    var t = new Date().toLocaleTimeString('tr-TR');
+    var div = document.createElement('div');
+    div.className = 'le ' + (cls || '');
+    div.textContent = '[' + t + '] ' + text;
+    el.appendChild(div);
+    el.scrollTop = el.scrollHeight;
+}
+
+function clearLog() {
+    document.getElementById('log').innerHTML = '';
+    setStat(0, 0, 0, 0);
+}
+
+function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function flash(id) {
+    var el = document.getElementById(id);
+    el.style.borderColor = 'var(--err)';
+    el.style.boxShadow = '0 0 10px rgba(239,68,68,0.4)';
+    el.focus();
+    setTimeout(function() { el.style.borderColor = ''; el.style.boxShadow = ''; }, 1400);
+}
+
+document.getElementById('msg-modal').addEventListener('click', function(e) {
+    if (e.target === document.getElementById('msg-modal')) closeMsgModal();
+});
+document.getElementById('acc-name').addEventListener('keypress', function(e) { if (e.key === 'Enter') addAccount(); });
+document.getElementById('note-input').addEventListener('keypress', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveNote(); }
+});
+
+// ── Sent Log ────────────────────────────────────────────
+function loadSentLog() {
+    fetch('/api/sent-log').then(function(r){return r.json()}).then(function(data) {
+        sentLogData = data;
+        renderSentLog();
+    });
+}
+
+function renderSentLog() {
+    var el = document.getElementById('sent-list');
+    var okCount = sentLogData.filter(function(s){return s.status === 'ba\u015Far\u0131l\u0131'}).length;
+    var errCount = sentLogData.length - okCount;
+    document.getElementById('sent-total').textContent = sentLogData.length;
+    document.getElementById('sent-ok').textContent = okCount;
+    document.getElementById('sent-err').textContent = errCount;
+    if (!sentLogData.length) {
+        el.innerHTML = '<div class="empty" style="padding:12px"><div class="empty-icon">\u{1F4E8}</div>Hen\u00FCz g\u00F6nderim yap\u0131lmad\u0131</div>';
+        return;
+    }
+    el.innerHTML = sentLogData.slice().reverse().map(function(s) {
+        var d = new Date(s.date);
+        var t = d.toLocaleDateString('tr-TR') + ' ' + d.toLocaleTimeString('tr-TR');
+        var cls = s.status === 'ba\u015Far\u0131l\u0131' ? 'ok' : 'err';
+        return '<div class="sent-item"><span class="sent-num">' + esc(s.number) + '</span><span class="sent-acc">' + esc(s.account) + '</span><span class="sent-status ' + cls + '">' + esc(s.status) + '</span><span class="sent-date">' + t + '</span></div>';
+    }).join('');
+}
+
+// ── Notes ───────────────────────────────────────────────
+function loadNotes() {
+    fetch('/api/notes').then(function(r){return r.json()}).then(function(data) {
+        notesData = data;
+        renderNotes();
+    });
+}
+
+function renderNotes() {
+    var el = document.getElementById('notes-list');
+    if (!notesData.length) {
+        el.innerHTML = '<div class="empty" style="padding:12px"><div class="empty-icon">\u{1F4DD}</div>Hen\u00FCz not eklenmedi</div>';
+        return;
+    }
+    el.innerHTML = notesData.slice().reverse().map(function(n) {
+        var d = new Date(n.date);
+        var t = d.toLocaleDateString('tr-TR') + ' ' + d.toLocaleTimeString('tr-TR');
+        return '<div class="note-item"><div class="note-text">' + esc(n.content) + '</div><div class="note-footer"><span class="note-date">' + t + '</span><button class="btn btn-ghost btn-sm" onclick="deleteNote(' + n.id + ')">\u2715</button></div></div>';
+    }).join('');
+}
+
+function saveNote() {
+    var content = document.getElementById('note-input').value.trim();
+    if (!content) { flash('note-input'); return; }
+    fetch('/api/notes', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ content: content })
+    }).then(function(r){return r.json()}).then(function(data) {
+        if (data.error) { alert(data.error); return; }
+        document.getElementById('note-input').value = '';
+        loadNotes();
+        log('Not kaydedildi', 'info');
+    });
+}
+
+function deleteNote(id) {
+    if (!confirm('Bu notu silmek istiyor musunuz?')) return;
+    fetch('/api/notes/' + id, { method: 'DELETE' }).then(function() { loadNotes(); });
+}
+
+// ── Replies (Dönüşler) ─────────────────────────────────
+var repliesData = [];
+
+function loadReplies() {
+    fetch('/api/replies').then(function(r){return r.json()}).then(function(data) {
+        repliesData = data;
+        renderReplies();
+    });
+}
+
+function renderReplies() {
+    var el = document.getElementById('replies-list');
+    document.getElementById('replies-total').textContent = repliesData.length;
+    updateReplyBadge();
+    if (!repliesData.length) {
+        el.innerHTML = '<div class="empty" style="padding:12px"><div class="empty-icon">\u{1F4E9}</div>Hen\u00FCz d\u00F6n\u00FC\u015F yok</div>';
+        return;
+    }
+    el.innerHTML = repliesData.slice().reverse().map(function(r) {
+        var d = new Date(r.date);
+        var t = d.toLocaleDateString('tr-TR') + ' ' + d.toLocaleTimeString('tr-TR');
+        var name = r.name ? esc(r.name) : '';
+        return '<div style="padding:8px 10px;margin-bottom:6px;border-radius:8px;border:1px solid rgba(139,92,246,0.25);background:rgba(139,92,246,0.04);">'
+            + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
+            + '<span style="font-weight:600;color:var(--purple);">' + esc(r.number) + (name ? ' <span style="font-weight:400;color:var(--dim);font-size:11px;">(' + name + ')</span>' : '') + '</span>'
+            + '<span style="font-size:10px;color:var(--dim);">' + t + '</span>'
+            + '</div>'
+            + '<div style="font-size:12px;color:var(--text);line-height:1.4;word-break:break-word;">' + esc(r.message) + '</div>'
+            + '<div style="font-size:10px;color:var(--dim);margin-top:4px;">Hesap: ' + esc(r.account || '-') + '</div>'
+            + '</div>';
+    }).join('');
+}
+
+function updateReplyBadge() {
+    var badge = document.getElementById('reply-badge');
+    if (repliesData.length > 0) {
+        badge.textContent = repliesData.length;
+        badge.style.display = 'inline';
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+// ── Proxy ───────────────────────────────────────────────
+function loadProxy() {
+    fetch('/api/proxy').then(function(r){return r.json()}).then(function(data) {
+        document.getElementById('proxy-type').value = data.type || 'http';
+        document.getElementById('proxy-host').value = data.host || '';
+        document.getElementById('proxy-port').value = data.port || '';
+        document.getElementById('proxy-user').value = data.username || '';
+        document.getElementById('proxy-pass').value = data.password || '';
+        updateProxyStatus(data.enabled);
+    });
+}
+
+function saveProxy(enabled) {
+    if (enabled && !proxyVerified) {
+        alert('\u00d6nce proxy\u0027yi test edin!');
+        return;
+    }
+    var type = document.getElementById('proxy-type').value;
+    var host = document.getElementById('proxy-host').value.trim();
+    var port = document.getElementById('proxy-port').value.trim();
+    var username = document.getElementById('proxy-user').value.trim();
+    var password = document.getElementById('proxy-pass').value.trim();
+    if (enabled && (!host || !port)) {
+        alert('Proxy a\u00e7mak i\u00e7in Host ve Port gerekli');
+        return;
+    }
+    fetch('/api/proxy', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ enabled: enabled, type: type, host: host, port: port, username: username, password: password })
+    }).then(function(r){return r.json()}).then(function(data) {
+        if (data.success) {
+            updateProxyStatus(enabled);
+            log(enabled ? 'Proxy a\u00e7\u0131ld\u0131: ' + type + '://' + host + ':' + port : 'Proxy kapat\u0131ld\u0131', 'info');
+            if (!enabled) {
+                proxyVerified = false;
+                enableProxyBtn(false);
+                updateSendBtnProxy();
+            }
+        }
+    });
+}
+
+function updateProxyStatus(enabled) {
+    var el = document.getElementById('proxy-status');
+    if (enabled) {
+        el.className = 'proxy-status on';
+        el.innerHTML = '\u2705 Proxy AKTIF \u2014 IP adresiniz gizli';
+    } else {
+        el.className = 'proxy-status off';
+        el.innerHTML = '\u26A0 Proxy kapal\u0131 \u2014 Kendi IP adresiniz kullan\u0131l\u0131yor';
+    }
+}
+
+function enableProxyBtn(enabled) {
+    var btn = document.getElementById('proxy-enable-btn');
+    btn.disabled = !enabled;
+    btn.style.opacity = enabled ? '1' : '0.4';
+}
+
+function updateSendBtnProxy() {
+    var btn = document.getElementById('btn-send');
+    fetch('/api/proxy').then(function(r){return r.json()}).then(function(pc) {
+        if (pc.enabled && !proxyVerified) {
+            btn.style.opacity = '0.5';
+            btn.title = 'Proxy test edilmedi — önce Proxy sekmesinden test edin';
+        } else {
+            btn.style.opacity = '1';
+            btn.title = '';
+        }
+    }).catch(function(){});
+}
+
+// ── Güvenli JSON parse helper ───────────────────────────
+function safeJson(response) {
+    return response.text().then(function(text) {
+        try { return JSON.parse(text); }
+        catch(e) { throw new Error('Sunucu JSON döndürmedi. Sunucuyu yeniden başlatın.'); }
+    });
+}
+
+// ── Proxy Test ──────────────────────────────────────────
+function testProxy() {
+    var type = document.getElementById('proxy-type').value;
+    var host = document.getElementById('proxy-host').value.trim();
+    var port = document.getElementById('proxy-port').value.trim();
+    var username = document.getElementById('proxy-user').value.trim();
+    var password = document.getElementById('proxy-pass').value.trim();
+    if (!host || !port) {
+        alert('Test i\u00e7in Host ve Port girin');
+        return;
+    }
+
+    var btn = document.getElementById('test-proxy-btn');
+    var result = document.getElementById('proxy-test-result');
+    btn.disabled = true;
+    btn.innerHTML = '\u23F3 Test ediliyor...';
+    result.style.display = 'block';
+    result.style.background = 'rgba(139,92,246,0.1)';
+    result.style.color = 'var(--purple)';
+    result.innerHTML = '\u23F3 Ger\u00e7ek IP al\u0131n\u0131yor...';
+
+    fetch('/api/myip').then(safeJson).then(function(myIpData) {
+        result.innerHTML = '\u23F3 Proxy \u00fczerinden IP kontrol ediliyor...';
+        return fetch('/api/proxy/test', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ type: type, host: host, port: port, username: username, password: password })
+        }).then(safeJson).then(function(data) {
+            btn.disabled = false;
+            btn.innerHTML = '\uD83D\uDD0D Test Et';
+            if (data.success) {
+                var same = data.ip === myIpData.ip;
+                result.style.background = same ? 'rgba(245,158,11,0.1)' : 'rgba(16,185,129,0.1)';
+                result.style.color = same ? 'var(--warn)' : 'var(--ok)';
+                result.innerHTML = '\u2705 Proxy \u00e7al\u0131\u015f\u0131yor!<br>' +
+                    '\uD83C\uDFE0 Ger\u00e7ek IP: <strong>' + myIpData.ip + '</strong><br>' +
+                    '\uD83D\uDD12 Proxy IP: <strong>' + data.ip + '</strong>' +
+                    (same ? '<br>\u26A0 IP de\u011fi\u015fmemi\u015f \u2014 Proxy \u00e7al\u0131\u015fm\u0131yor olabilir!' : '');
+                log('Proxy test ba\u015far\u0131l\u0131 \u2014 Proxy IP: ' + data.ip, 'info');
+                proxyVerified = true;
+                updateSendBtnProxy();
+                enableProxyBtn(true);
+            } else {
+                result.style.background = 'rgba(239,68,68,0.1)';
+                result.style.color = 'var(--err)';
+                result.innerHTML = '\u274C Proxy testi ba\u015far\u0131s\u0131z<br>' + (data.error || '');
+                log('Proxy test ba\u015far\u0131s\u0131z: ' + (data.error || ''), 'err');
+                proxyVerified = false;
+                updateSendBtnProxy();
+                enableProxyBtn(false);
+            }
+        });
+    }).catch(function(err) {
+        btn.disabled = false;
+        btn.innerHTML = '\uD83D\uDD0D Test Et';
+        result.style.background = 'rgba(239,68,68,0.1)';
+        result.style.color = 'var(--err)';
+        result.innerHTML = '\u274C ' + err.message;
+    });
+}
+
+// ── Tor VPN ─────────────────────────────────────────────
+function checkTorStatus() {
+    fetch('/api/tor/status').then(safeJson).then(function(data) {
+        var badge = document.getElementById('tor-badge');
+        var startBtn = document.getElementById('tor-start-btn');
+        var stopBtn = document.getElementById('tor-stop-btn');
+        var newipBtn = document.getElementById('tor-newip-btn');
+        var dlSec = document.getElementById('tor-download-section');
+        if (!data.installed) {
+            badge.textContent = 'Y\u00dcKL\u00dc DE\u011e\u0130L';
+            badge.style.background = 'rgba(245,158,11,0.15)';
+            badge.style.color = 'var(--warn)';
+            startBtn.disabled = true;
+            stopBtn.disabled = true;
+            newipBtn.disabled = true;
+            dlSec.style.display = 'block';
+        } else if (data.running) {
+            badge.textContent = 'A\u00c7IK';
+            badge.style.background = 'rgba(16,185,129,0.15)';
+            badge.style.color = 'var(--ok)';
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+            newipBtn.disabled = false;
+            dlSec.style.display = 'none';
+        } else {
+            badge.textContent = 'KAPALI';
+            badge.style.background = 'rgba(239,68,68,0.15)';
+            badge.style.color = 'var(--err)';
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            newipBtn.disabled = true;
+            dlSec.style.display = 'none';
+        }
+    }).catch(function() {});
+}
+
+function torStart() {
+    var btn = document.getElementById('tor-start-btn');
+    var msg = document.getElementById('tor-msg');
+    btn.disabled = true;
+    btn.innerHTML = '\u23f3 Ba\u015flat\u0131l\u0131yor...';
+    msg.style.display = 'block';
+    msg.style.color = 'var(--purple)';
+    msg.textContent = 'Tor a\u011f\u0131na ba\u011flan\u0131l\u0131yor...';
+    fetch('/api/tor/start', { method: 'POST' }).then(safeJson).then(function(data) {
+        btn.innerHTML = '\uD83D\uDE80 Tor A\u00e7';
+        if (data.needsDownload) {
+            btn.disabled = true;
+            msg.style.color = 'var(--warn)';
+            msg.textContent = 'Tor bulunamad\u0131, indirme gerekli.';
+            document.getElementById('tor-download-section').style.display = 'block';
+            return;
+        }
+        if (data.success) {
+            msg.style.color = 'var(--ok)';
+            msg.textContent = data.message;
+            log('Tor VPN a\u00e7\u0131ld\u0131 \u2014 SOCKS5 127.0.0.1:9050', 'info');
+            proxyVerified = true;
+            updateSendBtnProxy();
+            document.getElementById('proxy-type').value = 'socks5';
+            document.getElementById('proxy-host').value = '127.0.0.1';
+            document.getElementById('proxy-port').value = '9050';
+            document.getElementById('proxy-user').value = '';
+            document.getElementById('proxy-pass').value = '';
+            updateProxyStatus(true);
+        } else {
+            msg.style.color = 'var(--err)';
+            msg.textContent = data.error || 'Ba\u015flat\u0131lamad\u0131';
+            log('Tor hatas\u0131: ' + (data.error || ''), 'err');
+            if (data.needsReinstall || data.needsDownload) {
+                var dlSec = document.getElementById('tor-download-section');
+                dlSec.style.display = 'block';
+                var dlBtn = document.getElementById('tor-download-btn');
+                dlBtn.setAttribute('data-force', 'true');
+                dlBtn.innerHTML = '\uD83D\uDD04 Tor Yeniden \u0130ndir';
+                document.getElementById('tor-download-msg').textContent = 'Tor dosyalar\u0131 bozuk/eksik. Yeniden indirin.';
+            }
+        }
+        checkTorStatus();
+    }).catch(function(err) {
+        btn.disabled = false;
+        btn.innerHTML = '\uD83D\uDE80 Tor A\u00e7';
+        msg.style.display = 'block';
+        msg.style.color = 'var(--err)';
+        msg.textContent = err.message;
+    });
+}
+
+function torStop() {
+    var btn = document.getElementById('tor-stop-btn');
+    btn.disabled = true;
+    fetch('/api/tor/stop', { method: 'POST' }).then(safeJson).then(function(data) {
+        var msg = document.getElementById('tor-msg');
+        if (data.success) {
+            msg.style.display = 'block';
+            msg.style.color = 'var(--ok)';
+            msg.textContent = data.message;
+            updateProxyStatus(false);
+            proxyVerified = false;
+            updateSendBtnProxy();
+            log('Tor VPN kapat\u0131ld\u0131', 'info');
+        }
+        checkTorStatus();
+    }).catch(function() { checkTorStatus(); });
+}
+
+function torNewIp() {
+    var btn = document.getElementById('tor-newip-btn');
+    btn.disabled = true;
+    btn.innerHTML = '\u23f3 De\u011fi\u015ftiriliyor...';
+    fetch('/api/tor/newip', { method: 'POST' }).then(safeJson).then(function(data) {
+        btn.disabled = false;
+        btn.innerHTML = '\uD83D\uDD04 Yeni IP';
+        var msg = document.getElementById('tor-msg');
+        msg.style.display = 'block';
+        if (data.success) {
+            msg.style.color = 'var(--ok)';
+            msg.textContent = data.message;
+            log('Tor yeni IP devre al\u0131nd\u0131', 'info');
+        } else {
+            msg.style.color = 'var(--err)';
+            msg.textContent = data.error || 'Hata';
+        }
+    }).catch(function() {
+        btn.disabled = false;
+        btn.innerHTML = '\uD83D\uDD04 Yeni IP';
+    });
+}
+
+function torDownload() {
+    var btn = document.getElementById('tor-download-btn');
+    var msg = document.getElementById('tor-download-msg');
+    btn.disabled = true;
+    btn.innerHTML = '\u23f3 \u0130ndiriliyor...';
+    msg.textContent = 'Tor Expert Bundle indiriliyor, l\u00fctfen bekleyin...';
+    var force = btn.getAttribute('data-force') === 'true';
+    fetch('/api/tor/download', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ force: force }) }).then(safeJson).then(function(data) {
+        if (data.downloading) {
+            msg.textContent = '\u0130ndirme ba\u015flat\u0131ld\u0131...';
+        } else if (data.success) {
+            btn.disabled = false;
+            btn.innerHTML = '\u{1F4E5} Tor \u0130ndir (~15MB)';
+            msg.textContent = data.message;
+            checkTorStatus();
+        }
+    }).catch(function(err) {
+        btn.disabled = false;
+        btn.innerHTML = '\u{1F4E5} Tor \u0130ndir (~15MB)';
+        msg.textContent = err.message;
+    });
+}
+
+socket.on('tor-download-progress', function(d) {
+    document.getElementById('tor-download-msg').textContent = d.message;
+});
+socket.on('tor-download-complete', function(d) {
+    var btn = document.getElementById('tor-download-btn');
+    var msg = document.getElementById('tor-download-msg');
+    btn.disabled = false;
+    btn.setAttribute('data-force', 'false');
+    btn.innerHTML = '\u{1F4E5} Tor \u0130ndir (~15MB)';
+    if (d.success) {
+        msg.style.color = 'var(--ok)';
+        msg.textContent = d.message;
+        log('Tor indirildi \u2014 ' + d.message, 'info');
+        checkTorStatus();
+    } else {
+        msg.style.color = 'var(--err)';
+        msg.textContent = d.error;
+        log('Tor indirme hatas\u0131: ' + d.error, 'err');
+    }
+});
+socket.on('tor-status', function() { checkTorStatus(); });
+
+loadAccounts();
+loadMessages();
+loadSentLog();
+loadNotes();
+loadReplies();
+loadProxy();
+checkTorStatus();
+updateSendBtnProxy();
+updateModeStyles();
+
+if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+}
+
+// Proxy inputlar\u0131 de\u011fi\u015fince test\u0131 s\u0131f\u0131rla
+['proxy-type','proxy-host','proxy-port','proxy-user','proxy-pass'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener('input', function() {
+        proxyVerified = false;
+        enableProxyBtn(false);
+        updateSendBtnProxy();
+    });
+});
+
+log('Sistem haz\u0131r. Hesap ekleyip mesaj kaydedin.', 'info');
+</script>
+</body>
+</html>

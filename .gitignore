@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.wwebjs_auth/
+.wwebjs_cache/
+whatsapp-sender-data/
+*.exe
+.cache/
