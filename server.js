@@ -170,12 +170,12 @@ function startTor() {
             'SocksPort 9050',
             'ControlPort 9051',
             'CookieAuthentication 1',
-            'DataDirectory ' + dataDir.replace(/\\/g, '/'),
+            'DataDirectory "' + dataDir.replace(/\\/g, '/') + '"',
         ];
         const geoip = path.join(TOR_DIR, 'tor', 'geoip');
         const geoip6 = path.join(TOR_DIR, 'tor', 'geoip6');
-        if (fs.existsSync(geoip)) cfgLines.push('GeoIPFile ' + geoip.replace(/\\/g, '/'));
-        if (fs.existsSync(geoip6)) cfgLines.push('GeoIPv6File ' + geoip6.replace(/\\/g, '/'));
+        if (fs.existsSync(geoip)) cfgLines.push('GeoIPFile "' + geoip.replace(/\\/g, '/') + '"');
+        if (fs.existsSync(geoip6)) cfgLines.push('GeoIPv6File "' + geoip6.replace(/\\/g, '/') + '"');
         fs.writeFileSync(torrcPath, cfgLines.join('\n'));
         const torDir = path.dirname(torExe) !== '.' ? path.dirname(torExe) : TOR_DIR;
         let output = '', stderrOut = '', done = false;
@@ -1013,7 +1013,7 @@ app.post('/api/send', (req, res) => {
         return res.status(400).json({ error: 'Gönderim zaten devam ediyor' });
     }
 
-    const { numbers, message, messages: msgList, messageMode, delayMin, delayMax, burstCount, burstPause } = req.body;
+    const { numbers, message, messages: msgList, messageMode, delayMin, delayMax, burstCount, burstPause, antiSpam } = req.body;
 
     if (!numbers || numbers.length === 0) {
         return res.status(400).json({ error: 'Numara listesi boş' });
@@ -1043,6 +1043,7 @@ app.post('/api/send', (req, res) => {
         delayMax:   Math.max(2000,  parseInt(delayMax)  || 45000),
         burstCount: Math.max(1,     parseInt(burstCount) || 10),
         burstPause: Math.max(60000, parseInt(burstPause) || 300000),
+        antiSpam: antiSpam || { warmup: true, typing: true, offline: true, torIp: true }
     };
     if (opts.delayMax < opts.delayMin) opts.delayMax = opts.delayMin + 5000;
 
@@ -1082,7 +1083,7 @@ async function sendMessages(numbers, messageList, messageMode, accountIds, opts)
         let baseMin = opts.delayMin;
         let baseMax = opts.delayMax;
 
-        if (index < WARMUP_COUNT) {
+        if (opts.antiSpam.warmup && index < WARMUP_COUNT) {
             // Warm-up: kademeli hızlanma (ilk mesaj 3x, 2. mesaj 2.5x, ...)
             const factor = WARMUP_MULTIPLIER - (index * 0.5 * (WARMUP_MULTIPLIER - 1) / WARMUP_COUNT);
             baseMin = Math.round(baseMin * Math.max(1.5, factor));
@@ -1169,12 +1170,16 @@ async function sendMessages(numbers, messageList, messageMode, accountIds, opts)
                 await chat.sendSeen();
                 await sleep(randomDelay(500, 1200));
 
-                // Yazıyor simülasyonu — mesaj uzunluğuna göre süre
-                const typeDuration = getTypingDuration(msgText);
-                io.emit('send-log', { text: `⌨️ Yazıyor simülasyonu: ${Math.round(typeDuration/1000)}sn (${msgText.length} karakter)`, type: 'info' });
-                await chat.sendStateTyping();
-                await sleep(typeDuration);
-                await chat.clearState();
+                if (opts.antiSpam.typing) {
+                    // Yazıyor simülasyonu — mesaj uzunluğuna göre süre
+                    const typeDuration = getTypingDuration(msgText);
+                    io.emit('send-log', { text: `⌨️ Yazıyor simülasyonu: ${Math.round(typeDuration/1000)}sn (${msgText.length} karakter)`, type: 'info' });
+                    await chat.sendStateTyping();
+                    await sleep(typeDuration);
+                    await chat.clearState();
+                } else {
+                    await sleep(randomDelay(1000, 2000));
+                }
             } catch(_) {}
 
             // 5) Mesajı gönder
@@ -1227,7 +1232,7 @@ async function sendMessages(numbers, messageList, messageMode, accountIds, opts)
                 io.emit('send-pause', { seconds: pauseSec, index: i + 1, total: numbers.length });
 
                 // ─── Burst molasında Tor IP değiştir (varsa) ───
-                if (torReady) {
+                if (torReady && opts.antiSpam.torIp) {
                     try {
                         await torNewIdentity();
                         io.emit('send-log', { text: '🔄 Burst molası — Tor yeni IP alındı', type: 'info' });
@@ -1237,25 +1242,29 @@ async function sendMessages(numbers, messageList, messageMode, accountIds, opts)
                 }
 
                 // ─── Online/offline simülasyonu: molada çevrimdışı ol ───
-                try {
-                    const accId = pickAccount();
-                    if (accId && accounts[accId]?.client) {
-                        await accounts[accId].client.sendPresenceUnavailable();
-                        io.emit('send-log', { text: '📴 Çevrimdışı olundu (mola)', type: 'info' });
-                    }
-                } catch(_) {}
+                if (opts.antiSpam.offline) {
+                    try {
+                        const accId = pickAccount();
+                        if (accId && accounts[accId]?.client) {
+                            await accounts[accId].client.sendPresenceUnavailable();
+                            io.emit('send-log', { text: '📴 Çevrimdışı olundu (mola)', type: 'info' });
+                        }
+                    } catch(_) {}
+                }
 
                 await sleep(opts.burstPause);
                 if (stopRequested) break;
 
                 // Moladan sonra tekrar online ol
-                try {
-                    const accId = pickAccount();
-                    if (accId && accounts[accId]?.client) {
-                        await accounts[accId].client.sendPresenceAvailable();
-                        io.emit('send-log', { text: '📱 Tekrar çevrimiçi', type: 'info' });
-                    }
-                } catch(_) {}
+                if (opts.antiSpam.offline) {
+                    try {
+                        const accId = pickAccount();
+                        if (accId && accounts[accId]?.client) {
+                            await accounts[accId].client.sendPresenceAvailable();
+                            io.emit('send-log', { text: '📱 Tekrar çevrimiçi', type: 'info' });
+                        }
+                    } catch(_) {}
+                }
 
                 sentThisBurst = 0;
             } else {
@@ -1263,7 +1272,7 @@ async function sendMessages(numbers, messageList, messageMode, accountIds, opts)
                 const wait = getDelay(i);
 
                 // ─── Rastgele offline/online: %20 ihtimalle kısa offline ol ───
-                if (Math.random() < 0.2) {
+                if (opts.antiSpam.offline && Math.random() < 0.2) {
                     const offlineDuration = randomDelay(8000, 25000);
                     io.emit('send-log', { text: `📴 Kısa offline (${Math.round(offlineDuration/1000)}sn) — insan davranışı`, type: 'info' });
                     try {

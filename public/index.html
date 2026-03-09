@@ -215,7 +215,28 @@
                 <div class="fg"><label>Burst (ka&#231; mesajda)</label><input type="number" id="b-count" value="10" min="1"></div>
                 <div class="fg"><label>Burst Molas&#305; (dk)</label><input type="number" id="b-pause" value="5" min="1"></div>
             </div>
-            <div style="display:flex;gap:8px;margin-top:6px;">
+            <div class="divider"></div>
+            <div class="fg"><label>Anti-Spam Korumalar&#305;</label>
+                <div style="display:flex;flex-direction:column;gap:6px;background:var(--inp);padding:8px 10px;border-radius:8px;border:1px solid var(--inp-border);">
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;text-transform:none;letter-spacing:normal;">
+                        <input type="checkbox" id="chk-warmup" class="custom-check" checked>
+                        <span style="font-size:12px;color:var(--text);font-weight:600;">&#x1F525; Ak&#305;ll&#305; Warm-up (&#304;lk 5 mesaj yava&#351;)</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;text-transform:none;letter-spacing:normal;">
+                        <input type="checkbox" id="chk-typing" class="custom-check" checked>
+                        <span style="font-size:12px;color:var(--text);font-weight:600;">&#x2328;&#xFE0F; Ger&#231;ek&#231;i Yaz&#305;yor... Sim&#252;lasyonu</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;text-transform:none;letter-spacing:normal;">
+                        <input type="checkbox" id="chk-offline" class="custom-check" checked>
+                        <span style="font-size:12px;color:var(--text);font-weight:600;">&#x1F4F4; Arada K&#305;sa &#199;evrimd&#305;&#351;&#305; Olma (%20)</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;text-transform:none;letter-spacing:normal;">
+                        <input type="checkbox" id="chk-torip" class="custom-check" checked>
+                        <span style="font-size:12px;color:var(--text);font-weight:600;">&#x1F504; Burst Molas&#305;nda Tor Oto-IP Yenile</span>
+                    </label>
+                </div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:10px;">
                 <button class="btn btn-success btn-full" id="btn-send" onclick="startSend()">&#x25B6; Ba&#351;lat</button>
                 <button class="btn btn-danger" id="btn-stop" onclick="stopSend()" disabled style="min-width:90px;">&#x23F9; Durdur</button>
             </div>
@@ -673,9 +694,19 @@ function doStartSend() {
     var bCount = parseInt(document.getElementById('b-count').value);
     var bPause = parseInt(document.getElementById('b-pause').value) * 60000;
     var mode = getMessageMode();
+    
+    var asWarmup = document.getElementById('chk-warmup').checked;
+    var asTyping = document.getElementById('chk-typing').checked;
+    var asOffline = document.getElementById('chk-offline').checked;
+    var asTorIp = document.getElementById('chk-torip').checked;
+
     fetch('/api/send', {
         method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ numbers: numbers, messages: selectedMsgs, messageMode: mode, delayMin: dMin, delayMax: dMax, burstCount: bCount, burstPause: bPause })
+        body: JSON.stringify({ 
+            numbers: numbers, messages: selectedMsgs, messageMode: mode, 
+            delayMin: dMin, delayMax: dMax, burstCount: bCount, burstPause: bPause,
+            antiSpam: { warmup: asWarmup, typing: asTyping, offline: asOffline, torIp: asTorIp }
+        })
     }).then(function(r){return r.json()}).then(function(data) {
         if (data.error) alert(data.error);
     });
