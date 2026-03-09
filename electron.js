@@ -6,6 +6,7 @@ const https = require('https');
 
 let mainWindow;
 let splashWindow;
+let isUpdating = false;
 const appDir = path.dirname(process.execPath).includes('electron')
     ? __dirname
     : path.dirname(process.execPath);
@@ -491,6 +492,7 @@ function checkForUpdates() {
             }
             // 3 saniye bekle sonra kur
             setTimeout(() => {
+                isUpdating = true; // Kapanma onay dialogunu atla
                 autoUpdater.quitAndInstall(false, true);
             }, 3000);
         });
@@ -557,6 +559,8 @@ function launchApp() {
     }, 2000);
 
     mainWindow.on('close', (e) => {
+        if (isUpdating) return; // Güncelleme kuruluyorsa doğrudan kapat
+
         e.preventDefault();
         const choice = dialog.showMessageBoxSync(mainWindow, {
             type: 'question',

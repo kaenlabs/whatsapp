@@ -337,11 +337,15 @@ function httpDownload(url, dest) {
 
 function extractTarGz(archive, destDir) {
     return new Promise((resolve, reject) => {
-        // Önce sistem tar komutunu dene (Windows 10+ dahili tar var)
-        exec(`tar xzf "${archive}" -C "${destDir}"`, { timeout: 60000 }, (err) => {
-            if (!err && findTorExe()) return resolve();
-            // tar yoksa node.js ile aç
-            console.log('[Tor DL] Sistem tar başarısız, Node.js ile açılıyor...');
+        console.log(`[Tor DL] Sistem tar ile açılıyor: ${archive} -> ${destDir}`);
+        // Windows tar complains about -C with backslashes. Best to use cwd.
+        exec(`tar xzf "${path.basename(archive)}"`, { cwd: path.dirname(archive), timeout: 60000 }, (err, stdout, stderr) => {
+            if (!err && findTorExe()) {
+                console.log('[Tor DL] tar başarıyla tamamlandı.');
+                return resolve();
+            }
+            console.log('[Tor DL] Sistem tar başarısız:', err?.message || stderr);
+            console.log('[Tor DL] Node.js ile açılıyor...');
             try {
                 const input = fs.createReadStream(archive);
                 const gunzip = zlib.createGunzip();
@@ -349,13 +353,19 @@ function extractTarGz(archive, destDir) {
                 input.pipe(gunzip);
                 gunzip.on('data', (c) => chunks.push(c));
                 gunzip.on('end', () => {
-                    const tarBuf = Buffer.concat(chunks);
-                    extractTarBuffer(tarBuf, destDir);
-                    resolve();
+                    try {
+                        const tarBuf = Buffer.concat(chunks);
+                        extractTarBuffer(tarBuf, destDir);
+                        resolve();
+                    } catch(e) {
+                        reject(new Error('Node.js extraction error: ' + e.message));
+                    }
                 });
-                gunzip.on('error', reject);
-                input.on('error', reject);
-            } catch(e) { reject(e); }
+                gunzip.on('error', e => reject(new Error('Gunzip error: ' + e.message)));
+                input.on('error', e => reject(new Error('File read error: ' + e.message)));
+            } catch(e) {
+                reject(new Error('Extraction setup error: ' + e.message));
+            }
         });
     });
 }
@@ -1054,7 +1064,7 @@ app.post('/api/stop', (req, res) => {
     }
 });
 
-// ─── Core send logic ────────────────────────────────────────────────────────
+// ─── Core send logic (Anti-Spam Enhanced) ───────────────────────────────────
 
 async function sendMessages(numbers, messageList, messageMode, accountIds, opts) {
     io.emit('send-started', { total: numbers.length });
@@ -1062,12 +1072,44 @@ async function sendMessages(numbers, messageList, messageMode, accountIds, opts)
     let successCount = 0;
     let errorCount   = 0;
     let sentThisBurst = 0;
+    let totalSent = 0;
+
+    // ─── Akıllı warm-up: İlk mesajlar çok daha yavaş ───
+    const WARMUP_COUNT = 5;     // İlk 5 mesaj warm-up fazında
+    const WARMUP_MULTIPLIER = 3; // Warm-up'ta 3x daha yavaş
+
+    function getDelay(index) {
+        let baseMin = opts.delayMin;
+        let baseMax = opts.delayMax;
+
+        if (index < WARMUP_COUNT) {
+            // Warm-up: kademeli hızlanma (ilk mesaj 3x, 2. mesaj 2.5x, ...)
+            const factor = WARMUP_MULTIPLIER - (index * 0.5 * (WARMUP_MULTIPLIER - 1) / WARMUP_COUNT);
+            baseMin = Math.round(baseMin * Math.max(1.5, factor));
+            baseMax = Math.round(baseMax * Math.max(1.5, factor));
+            io.emit('send-log', { text: `🔥 Warm-up (${index + 1}/${WARMUP_COUNT}) — Bekleme: ${Math.round(baseMin/1000)}-${Math.round(baseMax/1000)}sn`, type: 'info' });
+        }
+
+        return randomDelay(baseMin, baseMax);
+    }
+
+    // ─── Mesaj uzunluğuna göre yazma süresini hesapla ───
+    function getTypingDuration(msgText) {
+        // Ortalama insan yazma hızı: ~200 karakter/dakika (3.3 karakter/saniye)
+        // Ama whatsapp'ta daha hızlı yazıyoruz, ~6 karakter/saniye diyelim
+        const charCount = msgText.length;
+        const baseMs = Math.round(charCount / 6 * 1000); // karakter sayısı / hız
+        // Min 1.5 saniye, max 12 saniye
+        const typingMs = Math.max(1500, Math.min(12000, baseMs));
+        // ±30% rastgelelik ekle
+        const variation = typingMs * 0.3;
+        return Math.round(typingMs + (Math.random() * variation * 2 - variation));
+    }
 
     function pickAccount() {
-        // Bağlı hesapları dinamik kontrol et — düşen hesabı atla
         const alive = accountIds.filter(id => accounts[id]?.status === 'bağlı' && accounts[id]?.client);
         if (alive.length === 0) return null;
-        return alive[sentThisBurst % alive.length];
+        return alive[totalSent % alive.length];
     }
 
     for (let i = 0; i < numbers.length; i++) {
@@ -1089,12 +1131,12 @@ async function sendMessages(numbers, messageList, messageMode, accountIds, opts)
         const chatId = `${number}@c.us`;
 
         try {
-            // 1) Numaranın gerçek chatId'sini al (varsa)
+            // 1) Numaranın gerçek chatId'sini al
             let realChatId = chatId;
             try {
                 const numberId = await client.getNumberId(number);
                 if (numberId) realChatId = numberId._serialized;
-            } catch(_) { /* format bulunamazsa default chatId kullan */ }
+            } catch(_) {}
 
             // 2) Kişiyi otomatik rastgele isimle kaydet
             const name = randomName();
@@ -1112,25 +1154,34 @@ async function sendMessages(numbers, messageList, messageMode, accountIds, opts)
                     } catch(e) {}
                 }, realChatId, name.first, name.last, name.full);
                 io.emit('send-log', { text: `📇 ${number} → ${name.full} olarak kaydedildi`, type: 'info' });
-            } catch(_) { /* contact save sessizce geç */ }
+            } catch(_) {}
 
-            // 3) Sohbeti aç ve yazıyor simülasyonu
-            try {
-                const chat = await client.getChatById(realChatId);
-                await chat.sendSeen();
-                await sleep(randomDelay(800, 1500));
-                await chat.sendStateTyping();
-                await sleep(randomDelay(2000, 4000));
-                await chat.clearState();
-            } catch(_) { /* simülasyon hatası önemsiz */ }
-
-            // 4) Mesaj seç ve gönder
+            // 3) Mesaj seç
             const msgText = messageMode === 'random'
                 ? messageList[Math.floor(Math.random() * messageList.length)]
                 : messageList[i % messageList.length];
+
+            // 4) İnsan benzeri sohbet açma + yazma simülasyonu
+            try {
+                const chat = await client.getChatById(realChatId);
+
+                // Sohbeti aç, göründü yap
+                await chat.sendSeen();
+                await sleep(randomDelay(500, 1200));
+
+                // Yazıyor simülasyonu — mesaj uzunluğuna göre süre
+                const typeDuration = getTypingDuration(msgText);
+                io.emit('send-log', { text: `⌨️ Yazıyor simülasyonu: ${Math.round(typeDuration/1000)}sn (${msgText.length} karakter)`, type: 'info' });
+                await chat.sendStateTyping();
+                await sleep(typeDuration);
+                await chat.clearState();
+            } catch(_) {}
+
+            // 5) Mesajı gönder
             await client.sendMessage(realChatId, msgText);
             successCount++;
             sentThisBurst++;
+            totalSent++;
 
             // Gönderim kaydını logla
             sentLog.push({
@@ -1150,8 +1201,8 @@ async function sendMessages(numbers, messageList, messageMode, accountIds, opts)
             });
         } catch (err) {
             errorCount++;
+            totalSent++;
 
-            // Hatalı gönderimleri de logla
             sentLog.push({
                 number, account: accounts[accountId]?.name || accountId,
                 status: 'hata', error: err.message, date: new Date().toISOString()
@@ -1169,15 +1220,69 @@ async function sendMessages(numbers, messageList, messageMode, accountIds, opts)
         }
 
         if (i < numbers.length - 1 && !stopRequested) {
-            // Burst mola: N mesajda bir uzun bekleme
+            // Burst mola
             if (sentThisBurst > 0 && sentThisBurst % opts.burstCount === 0) {
                 const pauseSec = Math.round(opts.burstPause / 1000);
                 console.log(`⏸ ${opts.burstCount} mesaj gönderildi, ${pauseSec}sn mola...`);
                 io.emit('send-pause', { seconds: pauseSec, index: i + 1, total: numbers.length });
+
+                // ─── Burst molasında Tor IP değiştir (varsa) ───
+                if (torReady) {
+                    try {
+                        await torNewIdentity();
+                        io.emit('send-log', { text: '🔄 Burst molası — Tor yeni IP alındı', type: 'info' });
+                    } catch(e) {
+                        io.emit('send-log', { text: '⚠️ Tor IP değiştirilemedi: ' + e.message, type: 'warn' });
+                    }
+                }
+
+                // ─── Online/offline simülasyonu: molada çevrimdışı ol ───
+                try {
+                    const accId = pickAccount();
+                    if (accId && accounts[accId]?.client) {
+                        await accounts[accId].client.sendPresenceUnavailable();
+                        io.emit('send-log', { text: '📴 Çevrimdışı olundu (mola)', type: 'info' });
+                    }
+                } catch(_) {}
+
                 await sleep(opts.burstPause);
                 if (stopRequested) break;
+
+                // Moladan sonra tekrar online ol
+                try {
+                    const accId = pickAccount();
+                    if (accId && accounts[accId]?.client) {
+                        await accounts[accId].client.sendPresenceAvailable();
+                        io.emit('send-log', { text: '📱 Tekrar çevrimiçi', type: 'info' });
+                    }
+                } catch(_) {}
+
+                sentThisBurst = 0;
             } else {
-                const wait = randomDelay(opts.delayMin, opts.delayMax);
+                // ─── Normal bekleme (warm-up dahil) ───
+                const wait = getDelay(i);
+
+                // ─── Rastgele offline/online: %20 ihtimalle kısa offline ol ───
+                if (Math.random() < 0.2) {
+                    const offlineDuration = randomDelay(8000, 25000);
+                    io.emit('send-log', { text: `📴 Kısa offline (${Math.round(offlineDuration/1000)}sn) — insan davranışı`, type: 'info' });
+                    try {
+                        const accId = pickAccount();
+                        if (accId && accounts[accId]?.client) {
+                            await accounts[accId].client.sendPresenceUnavailable();
+                        }
+                    } catch(_) {}
+
+                    await sleep(offlineDuration);
+
+                    try {
+                        const accId = pickAccount();
+                        if (accId && accounts[accId]?.client) {
+                            await accounts[accId].client.sendPresenceAvailable();
+                        }
+                    } catch(_) {}
+                }
+
                 await sleep(wait);
             }
         }
