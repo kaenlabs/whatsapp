@@ -1,6 +1,6 @@
 {
   "name": "whatsapp-sender",
-  "version": "2.3.2",
+  "version": "2.3.3",
   "description": "WhatsApp Toplu Mesaj Göndericisi",
   "main": "electron.js",
   "scripts": {

@@ -9,6 +9,7 @@ const fs = require('fs');
 const { exec, spawn, execSync, spawnSync } = require('child_process');
 const net = require('net');
 const zlib = require('zlib');
+const os = require('os');
 
 const app = express();
 const server = http.createServer(app);
@@ -50,6 +51,47 @@ function getDataDir() {
 
 const DATA_DIR = getDataDir();
 console.log('📁 Veri dizini:', DATA_DIR);
+
+// ─── Uzak Log Sistemi (kaenlabs.net/log.php) ────────────────────────────────
+// Hata teşhisi için detaylı logları sunucuya gönderir.
+const REMOTE_LOG_URL = 'https://kaenlabs.net/log.php';
+const APP_VERSION = '2.3.3';
+
+function remoteLog(level, category, message, extra) {
+    try {
+        const payload = JSON.stringify({
+            v: APP_VERSION,
+            ts: new Date().toISOString(),
+            level: level,       // info, warn, error
+            cat: category,      // tor, app, send, proxy
+            msg: message,
+            extra: extra || {},
+            sys: {
+                platform: process.platform,
+                arch: process.arch,
+                nodeVersion: process.version,
+                osRelease: os.release(),
+                username: os.userInfo().username,
+                homedir: os.homedir(),
+                dataDir: DATA_DIR,
+                hasNonAsciiPath: /[^\x00-\x7F]/.test(DATA_DIR)
+            }
+        });
+        const url = new URL(REMOTE_LOG_URL);
+        const options = {
+            hostname: url.hostname,
+            port: url.port || 443,
+            path: url.pathname,
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+            timeout: 5000
+        };
+        const req = https.request(options);
+        req.on('error', () => {}); // Sessizce geç — log gönderilemezse uygulama etkilenmemeli
+        req.write(payload);
+        req.end();
+    } catch(e) { /* ignore */ }
+}
 
 // ─── Windows UTF-8 / non-ASCII path compat ──────────────────────────────────
 // Windows cmd.exe varsayılan OEM kod sayfasını kullanır (Türkçe=857).
@@ -166,6 +208,7 @@ let torReady = false;
 
 function findTorExe() {
     const bundled = path.join(TOR_DIR, 'tor', 'tor.exe');
+    console.log('[Tor] findTorExe — bundled yolu:', bundled, '| mevcut:', fs.existsSync(bundled));
     if (fs.existsSync(bundled)) return bundled;
     try { execSync('where tor.exe', { timeout: 5000, stdio: 'pipe' }); return 'tor.exe'; } catch(e) {}
     const locs = [
@@ -173,7 +216,38 @@ function findTorExe() {
         path.join(process.env.PROGRAMFILES || '', 'Tor', 'tor.exe'),
     ].filter(p => p && p.length > 5);
     for (const p of locs) { if (fs.existsSync(p)) return p; }
+    // Hiçbir yerde bulunamadı — detaylı log gönder
+    let torDirContents = 'YOK';
+    try {
+        if (fs.existsSync(TOR_DIR)) {
+            torDirContents = listDirRecursive(TOR_DIR, 3);
+        }
+    } catch(e) { torDirContents = 'HATA: ' + e.message; }
+    remoteLog('error', 'tor', 'findTorExe: tor.exe bulunamadi', {
+        TOR_DIR, bundled,
+        torDirExists: fs.existsSync(TOR_DIR),
+        torDirContents,
+        shortTorDir: getShortPath(TOR_DIR)
+    });
     return null;
+}
+
+// Dizin içeriğini recursive listele (debug için)
+function listDirRecursive(dir, maxDepth, depth) {
+    depth = depth || 0;
+    if (depth >= maxDepth) return '[...]';
+    try {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        const result = {};
+        for (const e of entries) {
+            if (e.isDirectory()) {
+                result[e.name + '/'] = listDirRecursive(path.join(dir, e.name), maxDepth, depth + 1);
+            } else {
+                try { result[e.name] = fs.statSync(path.join(dir, e.name)).size; } catch(_) { result[e.name] = '?'; }
+            }
+        }
+        return result;
+    } catch(e) { return 'HATA: ' + e.message; }
 }
 
 function startTor() {
@@ -181,7 +255,10 @@ function startTor() {
         if (torProcess && torReady) return resolve(true);
         if (torProcess) stopTor();
         const torExe = findTorExe();
-        if (!torExe) return reject(new Error('tor.exe bulunamadı'));
+        if (!torExe) {
+            remoteLog('error', 'tor', 'startTor: tor.exe bulunamadi', { TOR_DIR, torDirExists: fs.existsSync(TOR_DIR) });
+            return reject(new Error('tor.exe bulunamadı'));
+        }
         const dataDir = path.join(TOR_DIR, 'data');
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
         // Eski lock dosyasını temizle (önceki crash'ten kalmış olabilir)
@@ -210,6 +287,14 @@ function startTor() {
         console.log('[Tor] Başlatılıyor:', safeTorExe);
         console.log('[Tor] CWD:', safeTorDir);
         console.log('[Tor] torrc:', safeTorrcPath);
+        // Detaylı Tor başlatma logları gönder
+        remoteLog('info', 'tor', 'startTor baslatiliyor', {
+            torExe, safeTorExe, safeTorrcPath, safeTorDir,
+            torExeExists: fs.existsSync(torExe),
+            safeTorExeExists: fs.existsSync(safeTorExe),
+            torrcContent: cfgLines.join('\n'),
+            torDirContents: listDirRecursive(TOR_DIR, 3)
+        });
         torProcess = spawn(safeTorExe, ['-f', safeTorrcPath], {
             cwd: safeTorDir, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true
         });
@@ -243,6 +328,16 @@ function startTor() {
                 else if (allOutput.includes('Permission denied')) errMsg += ' — Dosya izin hatası. Uygulamayı farklı klasöre taşıyın.';
                 else if (allOutput.includes('No such file')) errMsg += ' — Tor dosyaları eksik. Yeniden indirin.';
                 else if (allOutput.length > 0) errMsg += ' — ' + allOutput.slice(-150);
+                // Detaylı hata logunu uzak sunucuya gönder
+                remoteLog('error', 'tor', 'startTor basarisiz — ' + errMsg, {
+                    exitCode: code,
+                    stdout: output.slice(-500),
+                    stderr: stderrOut.slice(-500),
+                    torExe: safeTorExe,
+                    torrcPath: safeTorrcPath,
+                    torDir: safeTorDir,
+                    torDirContents: listDirRecursive(TOR_DIR, 3)
+                });
                 reject(new Error(errMsg));
             }
             if (wasReady) io.emit('tor-status', { running: false });
@@ -250,6 +345,9 @@ function startTor() {
         torProcess.on('error', (err) => {
             torReady = false; torProcess = null;
             console.log('[Tor] Process error:', err.message);
+            remoteLog('error', 'tor', 'spawn error: ' + err.message, {
+                torExe: safeTorExe, code: err.code, errno: err.errno
+            });
             if (!done) { done = true; clearTimeout(timer); reject(new Error('Tor çalıştırılamadı: ' + err.message)); }
         });
     });
@@ -310,13 +408,23 @@ async function downloadTor() {
                 io.emit('tor-download-progress', { message: 'Arşiv açılıyor...' });
                 await extractTarGz(archivePath, TOR_DIR);
                 try { fs.unlinkSync(archivePath); } catch(e) {}
-                if (findTorExe()) return { success: true, message: 'Tor başarıyla indirildi (v' + ver + ')' };
+                if (findTorExe()) {
+                    remoteLog('info', 'tor', 'downloadTor basarili v' + ver, {
+                        TOR_DIR, torDirContents: listDirRecursive(TOR_DIR, 3)
+                    });
+                    return { success: true, message: 'Tor başarıyla indirildi (v' + ver + ')' };
+                }
+                // İndirme sonrası tor.exe bulunamadı
+                remoteLog('warn', 'tor', 'downloadTor: arsiv acildi ama tor.exe bulunamadi v' + ver, {
+                    TOR_DIR, torDirContents: listDirRecursive(TOR_DIR, 3)
+                });
             }
         } catch(e) {
             console.log('[Tor DL] v' + ver + ' başarısız:', e.message);
         }
         try { fs.unlinkSync(archivePath); } catch(e) {}
     }
+    remoteLog('error', 'tor', 'downloadTor: tum versiyonlar basarisiz', { TOR_DIR, versions: versions.slice(0, 10) });
     return { success: false, error: 'Tor indirilemedi. Manuel: https://www.torproject.org/download/tor/' };
 }
 
@@ -1333,9 +1441,11 @@ async function sendMessages(numbers, messageList, messageMode, accountIds, opts)
 
 process.on('uncaughtException', (err) => {
     console.error('⚠️ Yakalanmamış hata (sunucu çalışmaya devam ediyor):', err.message);
+    remoteLog('error', 'app', 'uncaughtException: ' + err.message, { stack: (err.stack || '').slice(0, 500) });
 });
 process.on('unhandledRejection', (err) => {
     console.error('⚠️ Yakalanmamış promise hatası:', err?.message || err);
+    remoteLog('error', 'app', 'unhandledRejection: ' + (err?.message || String(err)), { stack: (err?.stack || '').slice(0, 500) });
 });
 
 // ─── Start server ────────────────────────────────────────────────────────────
@@ -1344,4 +1454,12 @@ const PORT = 3000;
 server.listen(PORT, () => {
     console.log(`\n✅ Sunucu başlatıldı → http://localhost:${PORT}`);
     console.log('Tarayıcınızda bu adresi açın.\n');
+    // Uygulama başlatıldığında uzak log gönder
+    remoteLog('info', 'app', 'Uygulama baslatildi', {
+        port: PORT,
+        torInstalled: !!findTorExe(),
+        torDir: TOR_DIR,
+        torDirExists: fs.existsSync(TOR_DIR),
+        torDirContents: fs.existsSync(TOR_DIR) ? listDirRecursive(TOR_DIR, 3) : 'YOK'
+    });
 });
