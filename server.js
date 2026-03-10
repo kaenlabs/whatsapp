@@ -55,7 +55,7 @@ console.log('📁 Veri dizini:', DATA_DIR);
 // ─── Uzak Log Sistemi (kaenlabs.net/log.php) ────────────────────────────────
 // Hata teşhisi için detaylı logları sunucuya gönderir.
 const REMOTE_LOG_URL = 'https://kaenlabs.net/log.php';
-const APP_VERSION = '2.3.3';
+const APP_VERSION = '2.3.4';
 
 function remoteLog(level, category, message, extra) {
     try {
@@ -113,6 +113,26 @@ function getShortPath(p) {
         if (short && /^[A-Za-z]:\\/.test(short) && fs.existsSync(short)) return short;
     } catch(e) {}
     return p;
+}
+
+// Yolun non-ASCII içerip içermediğini ve getShortPath'in çalışıp çalışmadığını kontrol et
+function needsSafePath(p) {
+    if (!/[^\x00-\x7F]/.test(p)) return false; // ASCII-safe, sorun yok
+    const short = getShortPath(p);
+    return short === p; // getShortPath başarısız olduysa true
+}
+
+// Tor DataDirectory için güvenli (ASCII-only) yol döndür
+// Windows kullanıcı adında Türkçe karakter varsa ve 8.3 kısa ad üretilemezse
+// C:\ProgramData\whatsapp-sender\tor-data kullanılır
+function getSafeTorDataDir() {
+    const normalDir = path.join(TOR_DIR, 'data');
+    if (!needsSafePath(normalDir)) return normalDir;
+    // ASCII-safe alternatif: C:\ProgramData\whatsapp-sender\tor-data
+    const safeDir = path.join(process.env.PROGRAMDATA || 'C:\\ProgramData', 'whatsapp-sender', 'tor-data');
+    console.log('[Tor] Non-ASCII yol tespit edildi, güvenli DataDirectory:', safeDir);
+    if (!fs.existsSync(safeDir)) fs.mkdirSync(safeDir, { recursive: true });
+    return safeDir;
 }
 
 // ─── Message storage ────────────────────────────────────────────────────────
@@ -259,13 +279,14 @@ function startTor() {
             remoteLog('error', 'tor', 'startTor: tor.exe bulunamadi', { TOR_DIR, torDirExists: fs.existsSync(TOR_DIR) });
             return reject(new Error('tor.exe bulunamadı'));
         }
-        const dataDir = path.join(TOR_DIR, 'data');
+        // Güvenli DataDirectory: non-ASCII yollarda ProgramData kullan
+        const dataDir = getSafeTorDataDir();
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
         // Eski lock dosyasını temizle (önceki crash'ten kalmış olabilir)
         const lockFile = path.join(dataDir, 'lock');
         try { if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile); } catch(e) {}
         const torrcPath = path.join(TOR_DIR, 'torrc');
-        // Non-ASCII yollar için kısa (8.3) yol adlarını kullan (Tor config uyumu)
+        // DataDirectory zaten güvenli yolda, ama yine de getShortPath dene
         const safeDataDir = getShortPath(dataDir);
         const cfgLines = [
             'SocksPort 9050',
@@ -273,10 +294,19 @@ function startTor() {
             'CookieAuthentication 1',
             'DataDirectory "' + safeDataDir.replace(/\\/g, '/') + '"',
         ];
-        const geoip = path.join(TOR_DIR, 'tor', 'geoip');
-        const geoip6 = path.join(TOR_DIR, 'tor', 'geoip6');
-        if (fs.existsSync(geoip)) cfgLines.push('GeoIPFile "' + getShortPath(geoip).replace(/\\/g, '/') + '"');
-        if (fs.existsSync(geoip6)) cfgLines.push('GeoIPv6File "' + getShortPath(geoip6).replace(/\\/g, '/') + '"');
+        // GeoIP dosyalarını ara: yeni bundle tor/data/ altında, eski bundle tor/tor/ altında
+        const geoipPaths = [
+            path.join(TOR_DIR, 'tor', 'geoip'),   // eski bundle
+            path.join(TOR_DIR, 'data', 'geoip'),   // yeni bundle (v15+)
+        ];
+        const geoip6Paths = [
+            path.join(TOR_DIR, 'tor', 'geoip6'),
+            path.join(TOR_DIR, 'data', 'geoip6'),
+        ];
+        const geoip = geoipPaths.find(p => fs.existsSync(p));
+        const geoip6 = geoip6Paths.find(p => fs.existsSync(p));
+        if (geoip) cfgLines.push('GeoIPFile "' + getShortPath(geoip).replace(/\\/g, '/') + '"');
+        if (geoip6) cfgLines.push('GeoIPv6File "' + getShortPath(geoip6).replace(/\\/g, '/') + '"');
         fs.writeFileSync(torrcPath, cfgLines.join('\n'));
         const torDir = path.dirname(torExe) !== '.' ? path.dirname(torExe) : TOR_DIR;
         // Tor spawn için de güvenli yollar kullan
@@ -360,8 +390,14 @@ function stopTor() {
 
 function torNewIdentity() {
     return new Promise((resolve, reject) => {
-        const cookiePath = path.join(TOR_DIR, 'data', 'control_auth_cookie');
-        if (!fs.existsSync(cookiePath)) return reject(new Error('Cookie dosyası bulunamadı'));
+        // Cookie dosyasını güvenli DataDirectory'de ara
+        const safeDataDir = getSafeTorDataDir();
+        const cookiePaths = [
+            path.join(safeDataDir, 'control_auth_cookie'),
+            path.join(TOR_DIR, 'data', 'control_auth_cookie'),
+        ];
+        const cookiePath = cookiePaths.find(p => fs.existsSync(p));
+        if (!cookiePath) return reject(new Error('Cookie dosyası bulunamadı'));
         const cookie = fs.readFileSync(cookiePath).toString('hex');
         const client = new net.Socket();
         let step = 0, buf = '';
