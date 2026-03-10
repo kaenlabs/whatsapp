@@ -6,7 +6,7 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
-const { exec, spawn, execSync } = require('child_process');
+const { exec, spawn, execSync, spawnSync } = require('child_process');
 const net = require('net');
 const zlib = require('zlib');
 
@@ -50,6 +50,28 @@ function getDataDir() {
 
 const DATA_DIR = getDataDir();
 console.log('📁 Veri dizini:', DATA_DIR);
+
+// ─── Windows UTF-8 / non-ASCII path compat ──────────────────────────────────
+// Windows cmd.exe varsayılan OEM kod sayfasını kullanır (Türkçe=857).
+// Kullanıcı adında Türkçe karakter varsa (Yiğit, Özge, İbrahim…)
+// exec() komutları bozulabilir. chcp 65001 cmd.exe'yi UTF-8'e geçirir.
+function utf8Cmd(cmd) {
+    return process.platform === 'win32' ? 'chcp 65001 >nul & ' + cmd : cmd;
+}
+
+// Windows 8.3 kısa yol adı al (saf ASCII). Tor gibi harici programların
+// config dosyalarında non-ASCII yollarla sorun yaşamaması için kullanılır.
+function getShortPath(p) {
+    if (process.platform !== 'win32' || !/[^\x00-\x7F]/.test(p)) return p;
+    try {
+        const r = spawnSync('cmd', ['/c', 'for %A in ("' + p + '") do @echo %~sA'], {
+            encoding: 'utf8', timeout: 5000, windowsHide: true
+        });
+        const short = (r.stdout || '').trim().split('\n').pop().trim();
+        if (short && /^[A-Za-z]:\\/.test(short) && fs.existsSync(short)) return short;
+    } catch(e) {}
+    return p;
+}
 
 // ─── Message storage ────────────────────────────────────────────────────────
 const MESSAGES_FILE = path.join(DATA_DIR, 'messages.json');
@@ -166,24 +188,30 @@ function startTor() {
         const lockFile = path.join(dataDir, 'lock');
         try { if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile); } catch(e) {}
         const torrcPath = path.join(TOR_DIR, 'torrc');
+        // Non-ASCII yollar için kısa (8.3) yol adlarını kullan (Tor config uyumu)
+        const safeDataDir = getShortPath(dataDir);
         const cfgLines = [
             'SocksPort 9050',
             'ControlPort 9051',
             'CookieAuthentication 1',
-            'DataDirectory "' + dataDir.replace(/\\/g, '/') + '"',
+            'DataDirectory "' + safeDataDir.replace(/\\/g, '/') + '"',
         ];
         const geoip = path.join(TOR_DIR, 'tor', 'geoip');
         const geoip6 = path.join(TOR_DIR, 'tor', 'geoip6');
-        if (fs.existsSync(geoip)) cfgLines.push('GeoIPFile "' + geoip.replace(/\\/g, '/') + '"');
-        if (fs.existsSync(geoip6)) cfgLines.push('GeoIPv6File "' + geoip6.replace(/\\/g, '/') + '"');
+        if (fs.existsSync(geoip)) cfgLines.push('GeoIPFile "' + getShortPath(geoip).replace(/\\/g, '/') + '"');
+        if (fs.existsSync(geoip6)) cfgLines.push('GeoIPv6File "' + getShortPath(geoip6).replace(/\\/g, '/') + '"');
         fs.writeFileSync(torrcPath, cfgLines.join('\n'));
         const torDir = path.dirname(torExe) !== '.' ? path.dirname(torExe) : TOR_DIR;
+        // Tor spawn için de güvenli yollar kullan
+        const safeTorExe = getShortPath(torExe);
+        const safeTorrcPath = getShortPath(torrcPath);
+        const safeTorDir = getShortPath(torDir);
         let output = '', stderrOut = '', done = false;
-        console.log('[Tor] Başlatılıyor:', torExe);
-        console.log('[Tor] CWD:', torDir);
-        console.log('[Tor] torrc:', torrcPath);
-        torProcess = spawn(torExe, ['-f', torrcPath], {
-            cwd: torDir, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true
+        console.log('[Tor] Başlatılıyor:', safeTorExe);
+        console.log('[Tor] CWD:', safeTorDir);
+        console.log('[Tor] torrc:', safeTorrcPath);
+        torProcess = spawn(safeTorExe, ['-f', safeTorrcPath], {
+            cwd: safeTorDir, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true
         });
         const timer = setTimeout(() => {
             if (!done) {
@@ -339,7 +367,7 @@ function extractTarGz(archive, destDir) {
     return new Promise((resolve, reject) => {
         console.log(`[Tor DL] Sistem tar ile açılıyor: ${archive} -> ${destDir}`);
         // Windows tar complains about -C with backslashes. Best to use cwd.
-        exec(`tar xzf "${path.basename(archive)}"`, { cwd: path.dirname(archive), timeout: 60000 }, (err, stdout, stderr) => {
+        exec(utf8Cmd(`tar xzf "${path.basename(archive)}"`), { cwd: path.dirname(archive), timeout: 60000 }, (err, stdout, stderr) => {
             if (!err && findTorExe()) {
                 console.log('[Tor DL] tar başarıyla tamamlandı.');
                 return resolve();
@@ -889,7 +917,7 @@ app.get('/api/myip', async (req, res) => {
 
 function runCmd(cmd, timeoutMs) {
     return new Promise((resolve) => {
-        exec(cmd, { timeout: timeoutMs || 15000 }, (err, stdout, stderr) => {
+        exec(utf8Cmd(cmd), { timeout: timeoutMs || 15000 }, (err, stdout, stderr) => {
             resolve({ ok: !err, out: (stdout || '').trim(), err: (stderr || '').trim() });
         });
     });

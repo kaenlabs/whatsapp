@@ -1,7 +1,7 @@
 const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { exec, execSync } = require('child_process');
+const { exec, execSync, spawnSync } = require('child_process');
 const https = require('https');
 
 let mainWindow;
@@ -35,6 +35,24 @@ function getPortableDataDir() {
 
 const DATA_DIR = getPortableDataDir();
 const CHROMIUM_DIR = path.join(DATA_DIR, 'chromium');
+
+// Windows UTF-8 uyumu: cmd.exe'yi UTF-8 kod sayfasına geçir
+function utf8Cmd(cmd) {
+    return process.platform === 'win32' ? 'chcp 65001 >nul & ' + cmd : cmd;
+}
+
+// Windows 8.3 kısa yol adı (non-ASCII yollar için)
+function getShortPath(p) {
+    if (process.platform !== 'win32' || !/[^\x00-\x7F]/.test(p)) return p;
+    try {
+        const r = spawnSync('cmd', ['/c', 'for %A in ("' + p + '") do @echo %~sA'], {
+            encoding: 'utf8', timeout: 5000, windowsHide: true
+        });
+        const short = (r.stdout || '').trim().split('\n').pop().trim();
+        if (short && /^[A-Za-z]:\\/.test(short) && fs.existsSync(short)) return short;
+    } catch(e) {}
+    return p;
+}
 
 // ─── Splash Screen (gereksinim kontrolü) ────────────────────────────────────
 
@@ -302,7 +320,7 @@ async function downloadChromiumToDataDir() {
 
     // PowerShell ile zip aç (Windows native)
     await new Promise((resolve, reject) => {
-        exec(`powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${CHROMIUM_DIR}' -Force"`, {
+        exec(utf8Cmd(`powershell -NoProfile -Command "Expand-Archive -LiteralPath '${zipPath}' -DestinationPath '${CHROMIUM_DIR}' -Force"`), {
             timeout: 120000
         }, (err) => {
             if (err) reject(new Error('ZIP açılamadı: ' + err.message));
@@ -384,7 +402,7 @@ async function installDependencies() {
             splashWindow.webContents.send('install-log', 'npm install çalıştırılıyor...');
 
             await new Promise((resolve, reject) => {
-                const proc = exec('npm install --production', {
+                const proc = exec(utf8Cmd('npm install --production'), {
                     cwd: resourceDir,
                     timeout: 300000
                 }, (err) => {
@@ -426,7 +444,7 @@ async function installDependencies() {
                     // Fallback: npx ile dene
                     splashWindow.webContents.send('install-log', 'Alternatif yöntem deneniyor...');
                     await new Promise((resolve, reject) => {
-                        exec(`npx puppeteer browsers install chrome --path "${CHROMIUM_DIR}"`, {
+                        exec(utf8Cmd(`npx puppeteer browsers install chrome --path "${getShortPath(CHROMIUM_DIR)}"`), {
                             cwd: resourceDir,
                             timeout: 600000
                         }, (err) => {
