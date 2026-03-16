@@ -815,10 +815,206 @@
             .fg2, .proxy-grid-3 { grid-template-columns:1fr; }
             .notes-compose, .tor-actions, .proxy-actions { flex-direction:column; }
         }
+        .send-actions-stack { display:flex; flex-direction:column; gap:10px; margin-top:10px; }
+        .send-main-btn { min-height:50px; font-size:15px; }
+        .send-force-btn { min-height:44px; }
+        .send-force-btn[disabled] { opacity:0.45; cursor:not-allowed; box-shadow:none; }
+        .send-main-btn.is-paused { background:linear-gradient(135deg, #f59e0b, #fb7185); }
+        .reply-shell {
+            display:grid;
+            grid-template-columns:minmax(280px, 340px) minmax(0, 1fr);
+            gap:14px;
+            min-height:460px;
+            margin-top:10px;
+        }
+        .reply-sidebar, .reply-detail {
+            background:linear-gradient(180deg, rgba(15,23,42,0.88), rgba(7,10,21,0.9));
+            border:1px solid rgba(167,139,250,0.14);
+            border-radius:18px;
+            box-shadow:0 18px 40px rgba(2,6,23,0.26);
+            min-height:0;
+            overflow:hidden;
+        }
+        .reply-sidebar { display:flex; flex-direction:column; }
+        .reply-sidebar-head, .reply-detail-head {
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:12px;
+            padding:14px 16px;
+            border-bottom:1px solid rgba(255,255,255,0.06);
+            background:rgba(255,255,255,0.02);
+        }
+        .reply-sidebar-meta, .reply-detail-meta { display:flex; flex-direction:column; gap:4px; min-width:0; }
+        .reply-sidebar-meta strong, .reply-detail-meta strong { font-size:14px; color:#f8fbff; }
+        .reply-sidebar-meta span, .reply-detail-meta span { font-size:11px; color:var(--dim); }
+        .reply-conversation-list {
+            display:flex;
+            flex-direction:column;
+            gap:8px;
+            padding:10px;
+            overflow:auto;
+            min-height:0;
+        }
+        .reply-conversation-item {
+            display:flex;
+            align-items:center;
+            gap:12px;
+            padding:12px;
+            border-radius:16px;
+            border:1px solid rgba(255,255,255,0.06);
+            background:rgba(255,255,255,0.03);
+            cursor:pointer;
+            transition:transform .18s ease, border-color .18s ease, background .18s ease, box-shadow .18s ease;
+        }
+        .reply-conversation-item:hover {
+            transform:translateY(-1px);
+            border-color:rgba(96,165,250,0.24);
+            background:rgba(96,165,250,0.08);
+            box-shadow:0 14px 28px rgba(15,23,42,0.18);
+        }
+        .reply-conversation-item.active {
+            border-color:rgba(139,92,246,0.34);
+            background:linear-gradient(135deg, rgba(59,130,246,0.14), rgba(139,92,246,0.16));
+            box-shadow:0 16px 34px rgba(59,130,246,0.16);
+        }
+        .reply-avatar {
+            width:46px;
+            height:46px;
+            border-radius:14px;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            flex-shrink:0;
+            font-weight:800;
+            color:#fff;
+            background:linear-gradient(135deg, rgba(59,130,246,0.9), rgba(139,92,246,0.9));
+            box-shadow:inset 0 1px 0 rgba(255,255,255,0.18);
+        }
+        .reply-conversation-main { min-width:0; flex:1; display:flex; flex-direction:column; gap:6px; }
+        .reply-conversation-top, .reply-conversation-bottom { display:flex; align-items:center; gap:10px; }
+        .reply-conversation-name {
+            font-size:13px;
+            font-weight:700;
+            color:#f8fbff;
+            min-width:0;
+            overflow:hidden;
+            text-overflow:ellipsis;
+            white-space:nowrap;
+        }
+        .reply-conversation-date {
+            margin-left:auto;
+            font-size:11px;
+            color:var(--dim);
+            flex-shrink:0;
+        }
+        .reply-conversation-number, .reply-chat-subline {
+            font-size:11px;
+            color:#b8c3d9;
+            min-width:0;
+            overflow:hidden;
+            text-overflow:ellipsis;
+            white-space:nowrap;
+        }
+        .reply-conversation-preview {
+            font-size:12px;
+            color:var(--dim);
+            min-width:0;
+            overflow:hidden;
+            text-overflow:ellipsis;
+            white-space:nowrap;
+        }
+        .reply-unread-chip, .reply-count-chip {
+            display:inline-flex;
+            align-items:center;
+            justify-content:center;
+            min-width:22px;
+            height:22px;
+            padding:0 8px;
+            border-radius:999px;
+            font-size:11px;
+            font-weight:800;
+        }
+        .reply-unread-chip {
+            background:linear-gradient(135deg, #ef4444, #fb7185);
+            color:#fff;
+            box-shadow:0 10px 18px rgba(239,68,68,0.24);
+        }
+        .reply-count-chip {
+            background:rgba(255,255,255,0.06);
+            color:#cbd5e1;
+            border:1px solid rgba(255,255,255,0.07);
+        }
+        .reply-detail {
+            display:grid;
+            grid-template-rows:auto minmax(0, 1fr) auto;
+        }
+        .reply-chat-messages {
+            padding:16px;
+            display:flex;
+            flex-direction:column;
+            gap:12px;
+            overflow:auto;
+            min-height:0;
+        }
+        .reply-bubble-wrap { display:flex; }
+        .reply-bubble-wrap.out { justify-content:flex-end; }
+        .reply-bubble {
+            max-width:min(78%, 520px);
+            border-radius:18px;
+            padding:12px 14px;
+            border:1px solid rgba(255,255,255,0.06);
+            background:rgba(255,255,255,0.05);
+            box-shadow:0 10px 22px rgba(2,6,23,0.16);
+        }
+        .reply-bubble-wrap.out .reply-bubble {
+            background:linear-gradient(135deg, rgba(37,99,235,0.22), rgba(139,92,246,0.22));
+            border-color:rgba(96,165,250,0.22);
+        }
+        .reply-bubble-text { color:#f8fbff; font-size:13px; line-height:1.45; white-space:pre-wrap; word-break:break-word; }
+        .reply-bubble-meta { margin-top:8px; font-size:11px; color:#b7c0d8; display:flex; gap:8px; align-items:center; }
+        .reply-detail-empty {
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            text-align:center;
+            padding:30px 18px;
+            color:var(--dim);
+            min-height:100%;
+        }
+        .reply-composer {
+            padding:14px 16px 16px;
+            border-top:1px solid rgba(255,255,255,0.06);
+            background:rgba(255,255,255,0.02);
+            display:flex;
+            flex-direction:column;
+            gap:10px;
+        }
+        .reply-composer textarea {
+            min-height:86px;
+            resize:vertical;
+            font-family:inherit;
+        }
+        .reply-composer-actions { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+        .reply-composer-hint { font-size:11px; color:var(--dim); }
+        .reply-detail-status {
+            font-size:11px;
+            color:var(--dim);
+            padding:0 16px 14px;
+        }
+        @media (max-width: 980px) {
+            .reply-shell { grid-template-columns:1fr; }
+            .reply-sidebar { min-height:240px; }
+            .reply-detail { min-height:420px; }
+        }
+        @media (max-width: 640px) {
+            .reply-composer-actions { flex-direction:column; align-items:stretch; }
+            .reply-bubble { max-width:100%; }
+        }
         @media (prefers-reduced-motion: reduce) {
             *, *::before, *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; }
         }
-    </style>    </style>
+    </style>
 </head>
 <body>
 
@@ -961,9 +1157,9 @@
                     </label>
                 </div>
             </div>
-            <div class="toolbar-row compact" style="margin-top:10px;">
-                <button class="btn btn-rgb btn-full" id="btn-send" onclick="startSend()">&#x25B6; Ba&#351;lat</button>
-                <button class="btn btn-danger" id="btn-stop" onclick="stopSend()" disabled style="min-width:96px;">&#x23F9; Durdur</button>
+            <div class="send-actions-stack">
+                <button class="btn btn-rgb btn-full send-main-btn" id="btn-send" onclick="handleSendToggle()">&#x25B6; Ba&#351;lat</button>
+                <button class="btn btn-danger btn-full send-force-btn" id="btn-force-stop" onclick="stopSend()" disabled>&#x23F9; Tamamen Durdur</button>
             </div>
             <div class="app-footer-note" style="margin-top:10px;">Ayn&#305; listede tekrar numaralar ve daha &#246;nce ba&#351;ar&#305;l&#305; g&#246;nderilenler otomatik atlan&#305;r.</div>
         </div>
@@ -1030,12 +1226,48 @@
                     <div class="status-inline">
                         <div>
                             <strong>D&#246;n&#252;&#351;ler an&#305;nda izleniyor</strong>
-                            <span>D&#252;z mesaj veya cevap olarak gelen mesajlar burada listelenir.</span>
+                            <span>Ki&#351;i bazl&#305; mini inbox g&#246;r&#252;n&#252;m&#252;yle son konu&#351;malar burada toplan&#305;r.</span>
                         </div>
                     </div>
                     <span class="theme-pill">Bildirim aktif</span>
                 </div>
-                <div id="replies-list" class="reply-list"></div>
+                <div class="reply-shell">
+                    <div class="reply-sidebar">
+                        <div class="reply-sidebar-head">
+                            <div class="reply-sidebar-meta">
+                                <strong>Konu&#351;malar</strong>
+                                <span id="replies-summary">Hen&#252;z konu&#351;ma yok</span>
+                            </div>
+                            <span class="glass-chip" id="replies-conversation-count">0 sohbet</span>
+                        </div>
+                        <div id="replies-list" class="reply-conversation-list"></div>
+                    </div>
+                    <div class="reply-detail">
+                        <div class="reply-detail-head">
+                            <div class="reply-detail-meta">
+                                <strong id="reply-chat-title">Bir konu&#351;ma se&#231;in</strong>
+                                <span id="reply-chat-subtitle">Numara, ad ve son hareket burada g&#246;r&#252;n&#252;r.</span>
+                            </div>
+                            <span class="theme-pill" id="reply-chat-account-pill">Bekleniyor</span>
+                        </div>
+                        <div id="reply-chat-messages" class="reply-chat-messages">
+                            <div class="reply-detail-empty">
+                                <div>
+                                    <div class="empty-icon">&#x1F4AC;</div>
+                                    Soldan bir ki&#351;i se&#231;in; son 5 kar&#351;&#305;l&#305;kl&#305; mesaj burada a&#231;&#305;ls&#305;n.
+                                </div>
+                            </div>
+                        </div>
+                        <div class="reply-composer">
+                            <textarea id="reply-compose-input" placeholder="Se&#231;ili ki&#351;iye mesaj yaz&#305;n..." disabled></textarea>
+                            <div class="reply-composer-actions">
+                                <div class="reply-composer-hint" id="reply-compose-hint">Mesaj g&#246;ndermek i&#231;in &#246;nce bir konu&#351;ma se&#231;in.</div>
+                                <button class="btn btn-rgb" id="reply-send-btn" onclick="sendReplyMessage()" disabled>&#x27A4; G&#246;nder</button>
+                            </div>
+                            <div class="reply-detail-status" id="reply-chat-status"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -1144,18 +1376,33 @@ var sentLogData = [];
 var proxyVerified = false;
 var notesData = [];
 var isSending = false;
+var isSendPaused = false;
+var canForceStopSend = false;
 var speedyStateBackup = null;
 var replyAudio = null;
 var replyAudioUnlocked = false;
+var repliesData = [];
+var replyConversations = [];
+var replyUnreadMap = {};
+var replySeenConversationKeys = {};
+var selectedReplyKey = '';
+var selectedReplyConversation = null;
+var replyHistoryCache = {};
+var replyHistoryLoading = false;
+var replySendInProgress = false;
+var replyChatStatusMessage = '';
+var activeTab = 'log';
 
 // ── Tabs ────────────────────────────────────────────────
 function switchTab(name) {
+    activeTab = name;
     document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
     document.querySelectorAll('.tab-content').forEach(function(t) { t.classList.remove('active'); });
     document.getElementById('tc-' + name).classList.add('active');
     var tabs = document.querySelectorAll('.tab');
     var map = { log: 0, sent: 1, replies: 2, notes: 3, proxy: 4 };
     if (map[name] !== undefined) tabs[map[name]].classList.add('active');
+    if (name === 'replies') markRepliesViewed();
 }
 
 // ── Socket Events ───────────────────────────────────────
@@ -1182,7 +1429,10 @@ socket.on('spam-detected', function(d) {
 });
 
 socket.on('send-started', function(d) {
-    isSending = true; setSendBtns();
+    isSending = true;
+    isSendPaused = false;
+    canForceStopSend = true;
+    setSendBtns();
     setStat(0, d.total, 0, 0, d.skippedCount || 0);
     log('G\u00F6nderim ba\u015Flad\u0131 \u2014 ' + d.total + ' numara', 'info');
 });
@@ -1204,20 +1454,46 @@ socket.on('send-pause', function(d) {
     log('\u23F8 ' + d.seconds + 'sn mola...', 'pause');
 });
 socket.on('send-paused', function(d) {
+    isSendPaused = !!d.manualPause;
+    canForceStopSend = true;
+    setSendBtns();
+    if (d.manualPause) {
+        log('\u23F8 Gönderim kullanıcı tarafından duraklatıldı (' + d.index + '/' + d.total + ')', 'pause');
+        return;
+    }
     log('\u23F8 Bağlı hesap kalmadı — yeni hesap bekleniyor (' + d.index + '/' + d.total + ')', 'pause');
 });
 socket.on('send-resumed', function(d) {
+    isSendPaused = false;
+    canForceStopSend = true;
+    setSendBtns();
+    if (d.manualPause) {
+        log('\u25B6 Gönderim tekrar başlatıldı', 'info');
+        return;
+    }
     log('\u25B6 Gönderim devam ediyor — ' + d.accountCount + ' bağlı hesap bulundu', 'info');
 });
+socket.on('send-state', function(d) {
+    isSending = !!d.isSending;
+    isSendPaused = !!d.isPaused;
+    canForceStopSend = !!d.canForceStop;
+    setSendBtns();
+});
 socket.on('send-complete', function(d) {
-    isSending = false; setSendBtns();
+    isSending = false;
+    isSendPaused = false;
+    canForceStopSend = false;
+    setSendBtns();
     setStat(d.total, d.total, d.successCount, d.errorCount, d.skippedCount);
     var msg = 'Tamamland\u0131 \u2014 Ba\u015Far\u0131l\u0131: ' + d.successCount + '  Hatal\u0131: ' + d.errorCount;
     if (d.skippedCount) msg += '  Atlanan: ' + d.skippedCount;
     log(msg, 'info');
 });
 socket.on('send-stopped', function(d) {
-    isSending = false; setSendBtns();
+    isSending = false;
+    isSendPaused = false;
+    canForceStopSend = false;
+    setSendBtns();
     setStat(d.index, d.total, d.successCount, d.errorCount, d.skippedCount);
     log('Durduruldu \u2014 ' + d.index + '/' + d.total, 'warn');
 });
@@ -1226,11 +1502,12 @@ socket.on('sent-log-update', function(data) {
     renderSentLog();
 });
 socket.on('reply-received', function(r) {
-    var exists = repliesData.some(function(item) {
-        return String(item.id) === String(r.id) || (item.chatId && r.chatId && item.chatId === r.chatId && item.message === r.message && item.date === r.date);
-    });
-    if (!exists) repliesData.push(r);
+    upsertReplyItem(r);
+    incrementReplyUnread(resolveReplyKey(r));
     renderReplies();
+    if (selectedReplyKey && resolveReplyKey(r) === selectedReplyKey) {
+        loadReplyHistory(selectedReplyConversation || r, { silent: true, force: true });
+    }
     playReplySound();
     sendClientLog('info', 'reply-received-ui', {
         number: r.number,
@@ -1238,10 +1515,35 @@ socket.on('reply-received', function(r) {
         name: r.name || '',
         messagePreview: String(r.message || '').slice(0, 120)
     });
-    log('\u{1F4E9} D\u00F6n\u00FC\u015F: ' + r.number + (r.name ? ' (' + r.name + ')' : '') + ' \u2014 ' + r.message.substring(0, 60), 'info');
-    if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification('D\u00F6n\u00FC\u015F Var!', { body: (r.name || r.number) + ' mesaj g\u00F6nderdi:\n' + r.message.substring(0, 100), icon: 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>\u{1F4E9}</text></svg>' });
+    log('\u{1F4E9} D\u00F6n\u00FC\u015F: ' + (r.number || '-') + (r.name ? ' (' + r.name + ')' : '') + ' \u2014 ' + String(r.message || '').substring(0, 60), 'info');
+    showReplyNotification(r);
+});
+socket.on('reply-conversation-updated', function(payload) {
+    if (!payload || !payload.conversation) return;
+    upsertReplyConversation(payload.conversation);
+    renderReplies();
+});
+socket.on('reply-chat-updated', function(payload) {
+    if (!payload) return;
+    var key = resolveReplyKey(payload);
+    if (!key) return;
+    replyHistoryCache[key] = normalizeReplyHistoryMessages(payload.messages || []);
+    if (selectedReplyKey && selectedReplyKey === key) {
+        renderReplyDetail();
+        if (activeTab === 'replies') markConversationSeen(key);
     }
+});
+socket.on('reply-manual-message', function(item) {
+    if (!item) return;
+    upsertReplyItem(item);
+    var key = resolveReplyKey(item);
+    if (key) {
+        if (!replyHistoryCache[key]) replyHistoryCache[key] = [];
+        replyHistoryCache[key].push(normalizeReplyItem(item));
+        replyHistoryCache[key] = replyHistoryCache[key].slice(-5);
+    }
+    renderReplies();
+    if (selectedReplyKey && selectedReplyKey === key) renderReplyDetail();
 });
 
 function ensureReplyAudio() {
@@ -1461,6 +1763,15 @@ function deleteMsg(id) {
     });
 }
 
+function handleSendToggle() {
+    if (isSending) {
+        if (isSendPaused) resumeSend();
+        else pauseSend();
+        return;
+    }
+    startSend();
+}
+
 function startSend() {
     // Proxy açıksa test edilmiş olmalı
     fetch('/api/proxy').then(function(r){return r.json()}).then(function(pc) {
@@ -1471,6 +1782,48 @@ function startSend() {
         }
         doStartSend();
     }).catch(function() { doStartSend(); });
+}
+
+function pauseSend() {
+    fetch('/api/send/pause', { method: 'POST' })
+        .then(safeJson)
+        .then(function(data) {
+            if (data.error) alert(data.error);
+        })
+        .catch(function(err) {
+            alert(err.message || 'Gönderim duraklatılamadı');
+        });
+}
+
+function resumeSend() {
+    fetch('/api/send/resume', { method: 'POST' })
+        .then(safeJson)
+        .then(function(data) {
+            if (data.error) alert(data.error);
+        })
+        .catch(function(err) {
+            alert(err.message || 'Gönderim başlatılamadı');
+        });
+}
+
+function syncSendState() {
+    fetch('/api/send/state').then(safeJson).then(function(data) {
+        isSending = !!data.isSending;
+        isSendPaused = !!data.isPaused;
+        canForceStopSend = !!data.canForceStop;
+        setSendBtns();
+    }).catch(function() {});
+}
+
+function stopSend() {
+    fetch('/api/stop', { method: 'POST' })
+        .then(safeJson)
+        .then(function(data) {
+            if (data && data.error) alert(data.error);
+        })
+        .catch(function(err) {
+            alert(err.message || 'Gönderim durdurulamadı');
+        });
 }
 
 function doStartSend() {
@@ -1504,8 +1857,6 @@ function doStartSend() {
         else if (data.skippedCount) log('G\u00F6nderim \u00F6ncesi ' + data.skippedCount + ' numara otomatik atland\u0131', 'skip');
     });
 }
-
-function stopSend() { fetch('/api/stop', { method: 'POST' }); }
 
 function toggleSpeedyMode() {
     var enabled = document.getElementById('chk-speedy').checked;
@@ -1553,8 +1904,22 @@ function toggleSpeedyMode() {
 }
 
 function setSendBtns() {
-    document.getElementById('btn-send').disabled = isSending;
-    document.getElementById('btn-stop').disabled = !isSending;
+    var btn = document.getElementById('btn-send');
+    var forceBtn = document.getElementById('btn-force-stop');
+    if (!btn) return;
+    btn.disabled = false;
+    btn.classList.toggle('is-paused', !!isSendPaused);
+    if (!isSending) {
+        btn.innerHTML = '&#x25B6; Ba&#351;lat';
+        btn.title = 'Gönderimi başlat';
+    } else if (isSendPaused) {
+        btn.innerHTML = '&#x25B6; Devam Et';
+        btn.title = 'Duraklatılmış gönderimi devam ettir';
+    } else {
+        btn.innerHTML = '&#x23F8; Durdur';
+        btn.title = 'Gönderimi duraklat';
+    }
+    if (forceBtn) forceBtn.disabled = !canForceStopSend;
 }
 
 function setSkippedStat(count) {
@@ -1681,6 +2046,10 @@ function esc(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+function escJsSingle(s) {
+    return String(s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+}
+
 function flash(id) {
     var el = document.getElementById(id);
     el.style.borderColor = 'var(--err)';
@@ -1746,50 +2115,441 @@ function deleteNote(id) {
 }
 
 // ── Replies (Dönüşler) ─────────────────────────────────
-var repliesData = [];
+function normalizeReplyItem(item) {
+    return {
+        id: item && item.id != null ? item.id : Date.now(),
+        chatId: String(item && item.chatId || '').trim(),
+        number: String(item && item.number || '').trim(),
+        name: String(item && item.name || '').trim(),
+        accountId: String(item && item.accountId || '').trim(),
+        account: String(item && item.account || '').trim(),
+        message: String(item && item.message || '').trim() || '(mesaj yok)',
+        date: item && item.date ? item.date : new Date().toISOString(),
+        direction: item && item.direction ? item.direction : 'in',
+        type: item && item.type ? item.type : 'chat'
+    };
+}
+
+function normalizeReplyConversation(item) {
+    var normalized = normalizeReplyItem(item || {});
+    return {
+        key: String(item && item.key || resolveReplyKey(normalized)),
+        chatId: String(item && item.chatId || normalized.chatId || '').trim(),
+        number: String(item && item.number || normalized.number || '').trim(),
+        name: String(item && item.name || normalized.name || '').trim(),
+        accountId: String(item && item.accountId || normalized.accountId || '').trim(),
+        account: String(item && item.account || normalized.account || '').trim(),
+        lastMessage: String(item && item.lastMessage || normalized.message || '').trim() || '(mesaj yok)',
+        lastDate: item && item.lastDate ? item.lastDate : normalized.date,
+        count: Math.max(1, parseInt(item && item.count, 10) || 1)
+    };
+}
+
+function normalizeReplyHistoryMessages(messages) {
+    return (messages || []).map(normalizeReplyItem).sort(function(a, b) {
+        return new Date(a.date).getTime() - new Date(b.date).getTime();
+    }).slice(-5);
+}
+
+function resolveReplyKey(item) {
+    if (!item) return '';
+    return String(item.key || item.chatId || item.number || item.id || '').trim();
+}
+
+function getReplyDisplayName(item) {
+    var normalized = normalizeReplyItem(item);
+    return normalized.name || normalized.number || normalized.chatId || 'Bilinmeyen kişi';
+}
+
+function getReplyDisplayNumber(item) {
+    var normalized = normalizeReplyItem(item);
+    return normalized.number || normalized.chatId || 'Numara bulunamadı';
+}
+
+function formatReplyDate(value) {
+    if (!value) return '-';
+    var d = new Date(value);
+    if (isNaN(d.getTime())) return '-';
+    return d.toLocaleDateString('tr-TR') + ' ' + d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+}
+
+function getReplyAvatarLabel(item) {
+    var name = getReplyDisplayName(item).trim();
+    if (!name) return '?';
+    var parts = name.split(/\s+/).filter(Boolean);
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+function buildReplyConversationsFromItems() {
+    var grouped = {};
+    repliesData.forEach(function(item) {
+        var normalized = normalizeReplyItem(item);
+        var key = resolveReplyKey(normalized);
+        if (!key) return;
+        if (!grouped[key]) {
+            grouped[key] = {
+                key: key,
+                chatId: normalized.chatId,
+                number: normalized.number,
+                name: normalized.name,
+                accountId: normalized.accountId,
+                account: normalized.account,
+                lastMessage: normalized.message,
+                lastDate: normalized.date,
+                count: 1
+            };
+            return;
+        }
+        grouped[key].count += 1;
+        if (new Date(normalized.date).getTime() >= new Date(grouped[key].lastDate).getTime()) {
+            grouped[key].chatId = normalized.chatId || grouped[key].chatId;
+            grouped[key].number = normalized.number || grouped[key].number;
+            grouped[key].name = normalized.name || grouped[key].name;
+            grouped[key].accountId = normalized.accountId || grouped[key].accountId;
+            grouped[key].account = normalized.account || grouped[key].account;
+            grouped[key].lastMessage = normalized.message;
+            grouped[key].lastDate = normalized.date;
+        }
+    });
+    return Object.keys(grouped).map(function(key) {
+        return normalizeReplyConversation(grouped[key]);
+    }).sort(function(a, b) {
+        return new Date(b.lastDate).getTime() - new Date(a.lastDate).getTime();
+    });
+}
+
+function setReplyData(payload) {
+    var items = Array.isArray(payload) ? payload : (payload && payload.items) || [];
+    var conversations = payload && payload.conversations;
+    repliesData = items.map(normalizeReplyItem).sort(function(a, b) {
+        return new Date(a.date).getTime() - new Date(b.date).getTime();
+    });
+    replyConversations = Array.isArray(conversations) && conversations.length
+        ? conversations.map(normalizeReplyConversation).sort(function(a, b) {
+            return new Date(b.lastDate).getTime() - new Date(a.lastDate).getTime();
+        })
+        : buildReplyConversationsFromItems();
+    syncSelectedConversation();
+}
+
+function syncSelectedConversation() {
+    if (!replyConversations.length) {
+        selectedReplyKey = '';
+        selectedReplyConversation = null;
+        return;
+    }
+    if (!selectedReplyKey) {
+        selectedReplyKey = replyConversations[0].key;
+    }
+    selectedReplyConversation = replyConversations.find(function(item) {
+        return item.key === selectedReplyKey;
+    }) || null;
+    if (!selectedReplyConversation) {
+        selectedReplyConversation = replyConversations[0];
+        selectedReplyKey = selectedReplyConversation ? selectedReplyConversation.key : '';
+    }
+}
+
+function upsertReplyItem(item) {
+    var normalized = normalizeReplyItem(item);
+    var matchIndex = repliesData.findIndex(function(existing) {
+        return String(existing.id) === String(normalized.id)
+            || (existing.chatId && normalized.chatId && existing.chatId === normalized.chatId && existing.message === normalized.message && existing.date === normalized.date);
+    });
+    if (matchIndex >= 0) repliesData[matchIndex] = normalized;
+    else repliesData.push(normalized);
+    repliesData.sort(function(a, b) { return new Date(a.date).getTime() - new Date(b.date).getTime(); });
+    upsertReplyConversation({
+        key: resolveReplyKey(normalized),
+        chatId: normalized.chatId,
+        number: normalized.number,
+        name: normalized.name,
+        accountId: normalized.accountId,
+        account: normalized.account,
+        lastMessage: normalized.message,
+        lastDate: normalized.date
+    });
+}
+
+function upsertReplyConversation(item) {
+    var normalized = normalizeReplyConversation(item);
+    var index = replyConversations.findIndex(function(existing) { return existing.key === normalized.key; });
+    var currentCount = index >= 0 ? replyConversations[index].count : 0;
+    normalized.count = Math.max(normalized.count, currentCount || 0, getReplyCountForKey(normalized.key));
+    if (index >= 0) replyConversations[index] = normalized;
+    else replyConversations.push(normalized);
+    replyConversations.sort(function(a, b) {
+        return new Date(b.lastDate).getTime() - new Date(a.lastDate).getTime();
+    });
+    syncSelectedConversation();
+}
+
+function getReplyCountForKey(key) {
+    return repliesData.filter(function(item) { return resolveReplyKey(item) === key; }).length;
+}
+
+function incrementReplyUnread(key) {
+    if (!key) return;
+    if (activeTab === 'replies' && selectedReplyKey === key) {
+        replyUnreadMap[key] = 0;
+        replySeenConversationKeys[key] = true;
+        updateReplyBadge();
+        return;
+    }
+    if (activeTab === 'replies') replySeenConversationKeys[key] = false;
+    replyUnreadMap[key] = (replyUnreadMap[key] || 0) + 1;
+    updateReplyBadge();
+}
+
+function markConversationSeen(key) {
+    if (!key) return;
+    replyUnreadMap[key] = 0;
+    replySeenConversationKeys[key] = true;
+    updateReplyBadge();
+}
+
+function markRepliesViewed() {
+    replyConversations.forEach(function(conv) {
+        replyUnreadMap[conv.key] = 0;
+        replySeenConversationKeys[conv.key] = true;
+    });
+    updateReplyBadge();
+    if (selectedReplyKey) renderReplyDetail();
+}
+
+function getTotalUnreadReplies() {
+    return Object.keys(replyUnreadMap).reduce(function(sum, key) {
+        return sum + (replyUnreadMap[key] || 0);
+    }, 0);
+}
 
 function loadReplies() {
-    fetch('/api/replies').then(function(r){return r.json()}).then(function(data) {
-        repliesData = data;
+    fetch('/api/replies').then(safeJson).then(function(data) {
+        setReplyData(data);
         renderReplies();
+        if (selectedReplyConversation) loadReplyHistory(selectedReplyConversation, { silent: true });
+    }).catch(function(err) {
+        document.getElementById('replies-list').innerHTML = '<div class="empty" style="padding:12px"><div class="empty-icon">📩</div>' + esc(err.message || 'Dönüşler yüklenemedi') + '</div>';
     });
+}
+
+function selectReplyConversation(key) {
+    selectedReplyKey = key;
+    syncSelectedConversation();
+    markConversationSeen(key);
+    renderReplies();
+    renderReplyDetail();
+    if (selectedReplyConversation) loadReplyHistory(selectedReplyConversation, { force: true });
 }
 
 function renderReplies() {
     var el = document.getElementById('replies-list');
-    document.getElementById('replies-total').textContent = repliesData.length;
+    var totalReplies = repliesData.length;
+    document.getElementById('replies-total').textContent = totalReplies;
+    document.getElementById('replies-conversation-count').textContent = replyConversations.length + ' sohbet';
+    document.getElementById('replies-summary').textContent = replyConversations.length
+        ? (totalReplies + ' mesaj, ' + replyConversations.length + ' kişi altında toplandı')
+        : 'Henüz konuşma yok';
     updateReplyBadge();
-    if (!repliesData.length) {
-        el.innerHTML = '<div class="empty" style="padding:12px"><div class="empty-icon">📩</div>Henüz dönüş yok</div>';
+    syncSelectedConversation();
+    if (!replyConversations.length) {
+        el.innerHTML = '<div class="empty" style="padding:18px 12px"><div class="empty-icon">📩</div>Henüz dönüş yok</div>';
+        renderReplyDetail();
         return;
     }
-    el.innerHTML = repliesData.slice().reverse().map(function(r) {
-        var d = new Date(r.date);
-        var t = d.toLocaleDateString('tr-TR') + ' ' + d.toLocaleTimeString('tr-TR');
-        var name = r.name ? esc(r.name) : '';
-        return '<div class="reply-item">'
-            + '<div class="reply-top">'
-            + '<div class="reply-main">'
-            + '<div class="reply-number">' + esc(r.number) + '</div>'
-            + (name ? '<div class="reply-name">' + name + '</div>' : '')
+    el.innerHTML = replyConversations.map(function(conv) {
+        var unread = replyUnreadMap[conv.key] || 0;
+        var active = conv.key === selectedReplyKey;
+        return '<button class="reply-conversation-item' + (active ? ' active' : '') + '" onclick="selectReplyConversation(\'' + escJsSingle(conv.key) + '\')">'
+            + '<div class="reply-avatar">' + esc(getReplyAvatarLabel(conv)) + '</div>'
+            + '<div class="reply-conversation-main">'
+            + '<div class="reply-conversation-top">'
+            + '<div class="reply-conversation-name">' + esc(getReplyDisplayName(conv)) + '</div>'
+            + '<div class="reply-conversation-date">' + esc(formatReplyDate(conv.lastDate)) + '</div>'
             + '</div>'
-            + '<div class="reply-date">' + t + '</div>'
+            + '<div class="reply-conversation-number">' + esc(getReplyDisplayNumber(conv)) + '</div>'
+            + '<div class="reply-conversation-bottom">'
+            + '<div class="reply-conversation-preview">' + esc(conv.lastMessage || '(mesaj yok)') + '</div>'
+            + (unread ? '<span class="reply-unread-chip">' + unread + '</span>' : '<span class="reply-count-chip">' + Math.max(1, conv.count || getReplyCountForKey(conv.key)) + '</span>')
             + '</div>'
-            + '<div class="reply-message">' + esc(r.message) + '</div>'
-            + '<div class="reply-account">Hesap: ' + esc(r.account || '-') + '</div>'
+            + '</div>'
+            + '</button>';
+    }).join('');
+    renderReplyDetail();
+}
+
+function renderReplyDetail() {
+    var titleEl = document.getElementById('reply-chat-title');
+    var subtitleEl = document.getElementById('reply-chat-subtitle');
+    var accountEl = document.getElementById('reply-chat-account-pill');
+    var messagesEl = document.getElementById('reply-chat-messages');
+    var inputEl = document.getElementById('reply-compose-input');
+    var sendBtn = document.getElementById('reply-send-btn');
+    var hintEl = document.getElementById('reply-compose-hint');
+    var statusEl = document.getElementById('reply-chat-status');
+
+    if (!selectedReplyConversation) {
+        titleEl.textContent = 'Bir konuşma seçin';
+        subtitleEl.textContent = 'Numara, ad ve son hareket burada görünür.';
+        accountEl.textContent = 'Bekleniyor';
+        inputEl.disabled = true;
+        sendBtn.disabled = true;
+        hintEl.textContent = 'Mesaj göndermek için önce bir konuşma seçin.';
+        replyChatStatusMessage = '';
+        statusEl.textContent = '';
+        messagesEl.innerHTML = '<div class="reply-detail-empty"><div><div class="empty-icon">💬</div>Soldan bir kişi seçin; son 5 karşılıklı mesaj burada açılsın.</div></div>';
+        return;
+    }
+
+    titleEl.textContent = getReplyDisplayName(selectedReplyConversation);
+    subtitleEl.textContent = getReplyDisplayNumber(selectedReplyConversation) + ' • ' + formatReplyDate(selectedReplyConversation.lastDate);
+    accountEl.textContent = selectedReplyConversation.account || 'Hesap yok';
+    inputEl.disabled = false;
+    sendBtn.disabled = replySendInProgress;
+    hintEl.textContent = replySendInProgress ? 'Mesaj gönderiliyor...' : 'Son 5 karşılıklı mesaj gösterilir.';
+    statusEl.textContent = replyChatStatusMessage || (replyHistoryLoading ? 'Mesaj geçmişi yükleniyor...' : '');
+
+    var history = replyHistoryCache[selectedReplyKey] || [];
+    if (!history.length) {
+        messagesEl.innerHTML = '<div class="reply-detail-empty"><div><div class="empty-icon">🕓</div>Mesaj geçmişi yükleniyor veya henüz bulunamadı.</div></div>';
+        return;
+    }
+
+    messagesEl.innerHTML = history.map(function(item) {
+        var normalized = normalizeReplyItem(item);
+        var outgoing = normalized.direction === 'out';
+        return '<div class="reply-bubble-wrap' + (outgoing ? ' out' : '') + '">'
+            + '<div class="reply-bubble">'
+            + '<div class="reply-bubble-text">' + esc(normalized.message) + '</div>'
+            + '<div class="reply-bubble-meta">'
+            + '<span>' + (outgoing ? 'Siz' : 'Karşı taraf') + '</span>'
+            + '<span>•</span>'
+            + '<span>' + esc(formatReplyDate(normalized.date)) + '</span>'
+            + '</div>'
+            + '</div>'
             + '</div>';
     }).join('');
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function loadReplyHistory(conversation, opts) {
+    opts = opts || {};
+    var key = resolveReplyKey(conversation);
+    if (!key) return Promise.resolve();
+    if (!opts.force && replyHistoryCache[key] && replyHistoryCache[key].length) {
+        replyChatStatusMessage = '';
+        if (!opts.silent) renderReplyDetail();
+        return Promise.resolve(replyHistoryCache[key]);
+    }
+    replyHistoryLoading = true;
+    replyChatStatusMessage = '';
+    if (!opts.silent) renderReplyDetail();
+    var params = new URLSearchParams();
+    if (conversation.chatId) params.set('chatId', conversation.chatId);
+    if (conversation.accountId) params.set('accountId', conversation.accountId);
+    params.set('limit', '5');
+    return fetch('/api/replies/history?' + params.toString()).then(safeJson).then(function(data) {
+        replyHistoryCache[key] = normalizeReplyHistoryMessages(data.messages || []);
+        replyHistoryLoading = false;
+        replyChatStatusMessage = replyHistoryCache[key].length ? '' : 'Geçmiş bulunamadı';
+        if (selectedReplyKey === key) {
+            renderReplyDetail();
+            if (activeTab === 'replies') markConversationSeen(key);
+        }
+        return replyHistoryCache[key];
+    }).catch(function(err) {
+        replyHistoryLoading = false;
+        replyChatStatusMessage = err.message || 'Mesaj geçmişi alınamadı';
+        if (selectedReplyKey === key) {
+            renderReplyDetail();
+        }
+    });
+}
+
+function sendReplyMessage() {
+    if (!selectedReplyConversation || replySendInProgress) return;
+    var inputEl = document.getElementById('reply-compose-input');
+    var text = inputEl.value.trim();
+    if (!text) {
+        inputEl.focus();
+        return;
+    }
+    replySendInProgress = true;
+    replyChatStatusMessage = '';
+    renderReplyDetail();
+    fetch('/api/replies/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            chatId: selectedReplyConversation.chatId,
+            accountId: selectedReplyConversation.accountId,
+            account: selectedReplyConversation.account,
+            number: selectedReplyConversation.number,
+            name: selectedReplyConversation.name,
+            message: text
+        })
+    }).then(safeJson).then(function(data) {
+        if (data.error) throw new Error(data.error);
+        inputEl.value = '';
+        replyChatStatusMessage = 'Mesaj gönderildi';
+        if (data.item) {
+            upsertReplyItem(data.item);
+            var key = resolveReplyKey(data.item);
+            if (!replyHistoryCache[key]) replyHistoryCache[key] = [];
+            replyHistoryCache[key].push(normalizeReplyItem(data.item));
+            replyHistoryCache[key] = replyHistoryCache[key].slice(-5);
+        }
+        replySendInProgress = false;
+        renderReplies();
+        renderReplyDetail();
+        loadReplyHistory(selectedReplyConversation, { silent: true, force: true });
+    }).catch(function(err) {
+        replySendInProgress = false;
+        replyChatStatusMessage = err.message || 'Mesaj gönderilemedi';
+        renderReplyDetail();
+    });
 }
 
 function updateReplyBadge() {
     var badge = document.getElementById('reply-badge');
-    if (repliesData.length > 0) {
-        badge.textContent = repliesData.length;
+    var totalUnread = getTotalUnreadReplies();
+    if (totalUnread > 0) {
+        badge.textContent = totalUnread;
         badge.style.display = 'inline';
     } else {
         badge.style.display = 'none';
     }
 }
+
+function showReplyNotification(item) {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    var normalized = normalizeReplyItem(item);
+    var sender = getReplyDisplayName(normalized);
+    var number = getReplyDisplayNumber(normalized);
+    new Notification('Dönüş Var!', {
+        body: sender + ' • ' + number + '\n' + normalized.message.substring(0, 100),
+        icon: 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>\u{1F4E9}</text></svg>'
+    });
+}
+
+function setupReplyComposerShortcuts() {
+    var input = document.getElementById('reply-compose-input');
+    if (!input) return;
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendReplyMessage();
+        }
+    });
+}
+
+function hydrateSendStateOnLoad() {
+    syncSendState();
+    setSendBtns();
+}
+
+setupReplyComposerShortcuts();
 
 // ── Proxy ───────────────────────────────────────────────
 function loadProxy() {
@@ -2110,6 +2870,7 @@ loadMessages();
 loadSentLog();
 loadNotes();
 loadReplies();
+hydrateSendStateOnLoad();
 loadProxy();
 checkTorStatus();
 updateSendBtnProxy();

@@ -23,7 +23,366 @@ const accounts = {};
 
 let sendingInProgress = false;
 let stopRequested = false;
+let manualPauseRequested = false;
 const SEND_PAUSE_POLL_MS = 1500;
+const SEND_MANUAL_PAUSE_POLL_MS = 800;
+const HISTORY_MESSAGE_LIMIT = 5;
+const MANUAL_REPLY_STATUS = 'manuel';
+const MAX_REPLY_MESSAGE_LENGTH = 4000;
+const REPLY_HISTORY_LIMIT = 50;
+const KNOWN_WHATSAPP_SUFFIXES = ['@c.us', '@g.us', '@s.whatsapp.net'];
+const MEDIA_FALLBACK_TEXT = '(medya)';
+const MANUAL_PAUSE_REASON = 'manual';
+const NO_ACCOUNTS_PAUSE_REASON = 'no-accounts';
+const USER_AGENT_CHAT_SCOPE = 'reply-chat';
+const FORCE_STOP_LABEL = 'Tamamen Durdur';
+const TOGGLE_START_LABEL = 'Başlat';
+const TOGGLE_PAUSE_LABEL = 'Durdur';
+const TOGGLE_RESUME_LABEL = 'Devam Et';
+const EMPTY_REPLY_NUMBER = '-';
+const UNKNOWN_CONTACT_NAME = 'Bilinmeyen';
+const UNKNOWN_ACCOUNT_LABEL = '-';
+const EMPTY_MESSAGE_FALLBACK = '(boş mesaj)';
+const MESSAGE_TRIM_LIMIT = 1000;
+const REPLY_NOTIFICATION_PREVIEW_LIMIT = 100;
+const LOG_PREVIEW_LIMIT = 120;
+const SOCKET_REPLY_EVENT = 'reply-received';
+const SOCKET_SEND_PAUSED_EVENT = 'send-paused';
+const SOCKET_SEND_RESUMED_EVENT = 'send-resumed';
+const SOCKET_SEND_STOPPED_EVENT = 'send-stopped';
+const SOCKET_SEND_STARTED_EVENT = 'send-started';
+const SOCKET_SEND_COMPLETE_EVENT = 'send-complete';
+const SOCKET_SEND_PROGRESS_EVENT = 'send-progress';
+const SOCKET_SENT_LOG_UPDATE_EVENT = 'sent-log-update';
+const SOCKET_SEND_LOG_EVENT = 'send-log';
+const SOCKET_REPLY_CHAT_UPDATED_EVENT = 'reply-chat-updated';
+const SOCKET_REPLY_CONVERSATION_UPDATED_EVENT = 'reply-conversation-updated';
+const SOCKET_REPLY_MANUAL_MESSAGE_EVENT = 'reply-manual-message';
+const HISTORY_FETCH_DEFAULT_LIMIT = 5;
+const HISTORY_FETCH_MAX_LIMIT = 20;
+const REPLY_GROUP_FALLBACK_LABEL = 'Numara yok';
+const REPLY_HISTORY_FETCH_ERROR = 'Sohbet geçmişi alınamadı';
+const REPLY_SEND_ERROR = 'Mesaj gönderilemedi';
+const REPLY_NOT_FOUND_ERROR = 'Sohbet bulunamadı';
+const SEND_NOT_ACTIVE_ERROR = 'Gönderim zaten durmuş';
+const SEND_ALREADY_ACTIVE_ERROR = 'Gönderim zaten devam ediyor';
+const SEND_ALREADY_PAUSED_ERROR = 'Gönderim zaten duraklatıldı';
+const SEND_NOT_PAUSED_ERROR = 'Gönderim duraklatılmadı';
+const INVALID_REPLY_MESSAGE_ERROR = 'Gönderilecek mesaj boş olamaz';
+const INVALID_REPLY_CONTEXT_ERROR = 'Geçersiz sohbet bilgisi';
+const SEND_PAUSED_LOG_TEXT = '⏸ Gönderim kullanıcı tarafından duraklatıldı';
+const SEND_RESUMED_LOG_TEXT = '▶ Gönderim kullanıcı tarafından devam ettirildi';
+const SEND_WAITING_LOG_TEXT = '⏸ Bağlı hesap kalmadı — yeni hesap bekleniyor';
+const HISTORY_REFRESH_REASON_INCOMING = 'incoming';
+const HISTORY_REFRESH_REASON_MANUAL = 'manual';
+const HISTORY_DIRECTION_IN = 'in';
+const HISTORY_DIRECTION_OUT = 'out';
+const CHAT_ID_QUERY_KEY = 'chatId';
+const ACCOUNT_ID_QUERY_KEY = 'accountId';
+const HISTORY_LIMIT_QUERY_KEY = 'limit';
+const HISTORY_LIMIT_DEFAULT = 5;
+const HISTORY_LIMIT_HARD_MAX = 20;
+const SOCKET_REASON_KEY = 'reason';
+const SOCKET_MANUAL_PAUSE_FLAG = 'manualPause';
+const SOCKET_FROM_KEY = 'from';
+const SOCKET_BODY_KEY = 'body';
+const SOCKET_TYPE_KEY = 'type';
+const SOCKET_MESSAGE_ID_KEY = 'messageId';
+const SOCKET_CHAT_ID_KEY = 'chatId';
+const SOCKET_ACCOUNT_ID_KEY = 'accountId';
+const SOCKET_ACCOUNT_NAME_KEY = 'accountName';
+const SOCKET_NUMBER_KEY = 'number';
+const SOCKET_NAME_KEY = 'name';
+const SOCKET_DATE_KEY = 'date';
+const SOCKET_MESSAGES_KEY = 'messages';
+const SOCKET_PREVIEW_KEY = 'preview';
+const SOCKET_UNREAD_KEY = 'unread';
+const SOCKET_COUNT_KEY = 'count';
+const SOCKET_ACTIVE_KEY = 'active';
+const SOCKET_STATUS_KEY = 'status';
+const SOCKET_LABEL_KEY = 'label';
+const SOCKET_TOTAL_KEY = 'total';
+const SOCKET_INDEX_KEY = 'index';
+const SOCKET_SECONDS_KEY = 'seconds';
+const SOCKET_SUCCESS_COUNT_KEY = 'successCount';
+const SOCKET_ERROR_COUNT_KEY = 'errorCount';
+const SOCKET_SKIPPED_COUNT_KEY = 'skippedCount';
+const SOCKET_HISTORY_LIMIT_KEY = 'historyLimit';
+const SOCKET_MESSAGE_PREVIEW_LIMIT = 80;
+const SOCKET_REPLY_PREVIEW_LIMIT = 60;
+const SOCKET_REPLY_BADGE_LIMIT = 99;
+const SOCKET_EMPTY_HISTORY_MESSAGE = 'Henüz mesaj yok';
+const SOCKET_HISTORY_SOURCE_API = 'api';
+const SOCKET_HISTORY_SOURCE_SOCKET = 'socket';
+const SOCKET_HISTORY_SOURCE_LOCAL = 'local';
+const SOCKET_HISTORY_SOURCE_REPLY = 'reply';
+const SOCKET_HISTORY_SOURCE_SENT = 'sent';
+const SOCKET_HISTORY_SOURCE_MANUAL = 'manual';
+const SOCKET_HISTORY_SOURCE_UNKNOWN = 'unknown';
+const SOCKET_HISTORY_SOURCE_SYSTEM = 'system';
+const SOCKET_HISTORY_SOURCE_TRACKED = 'tracked';
+const SOCKET_HISTORY_SOURCE_SELECTED = 'selected';
+const SOCKET_HISTORY_SOURCE_GROUPED = 'grouped';
+const SOCKET_HISTORY_SOURCE_RENDER = 'render';
+const SOCKET_HISTORY_SOURCE_NOTIFICATION = 'notification';
+const SOCKET_HISTORY_SOURCE_TAB = 'tab';
+const SOCKET_HISTORY_SOURCE_SWITCH = 'switch';
+const SOCKET_HISTORY_SOURCE_LOAD = 'load';
+const SOCKET_HISTORY_SOURCE_REFRESH = 'refresh';
+const SOCKET_HISTORY_SOURCE_SEND = 'send';
+const SOCKET_HISTORY_SOURCE_FETCH = 'fetch';
+const SOCKET_HISTORY_SOURCE_CLICK = 'click';
+const SOCKET_HISTORY_SOURCE_INIT = 'init';
+const SOCKET_HISTORY_SOURCE_STATE = 'state';
+const SOCKET_HISTORY_SOURCE_BADGE = 'badge';
+const SOCKET_HISTORY_SOURCE_REPLY_LIST = 'reply-list';
+const SOCKET_HISTORY_SOURCE_DETAIL = 'detail';
+const SOCKET_HISTORY_SOURCE_CONVERSATION = 'conversation';
+const SOCKET_HISTORY_SOURCE_COMPOSER = 'composer';
+const SOCKET_HISTORY_SOURCE_TOGGLE = 'toggle';
+const SOCKET_HISTORY_SOURCE_FORCE_STOP = 'force-stop';
+const SOCKET_HISTORY_SOURCE_PAUSE = 'pause';
+const SOCKET_HISTORY_SOURCE_RESUME = 'resume';
+const SOCKET_HISTORY_SOURCE_STOP = 'stop';
+const SOCKET_HISTORY_SOURCE_START = 'start';
+const SOCKET_HISTORY_SOURCE_COMPLETE = 'complete';
+const SOCKET_HISTORY_SOURCE_PROGRESS = 'progress';
+const SOCKET_HISTORY_SOURCE_STATUS = 'status';
+const SOCKET_HISTORY_SOURCE_HISTORY = 'history';
+const SOCKET_HISTORY_SOURCE_GROUP = 'group';
+const SOCKET_HISTORY_SOURCE_NUMBER = 'number';
+const SOCKET_HISTORY_SOURCE_NAME = 'name';
+const SOCKET_HISTORY_SOURCE_ACCOUNT = 'account';
+const SOCKET_HISTORY_SOURCE_MESSAGE = 'message';
+const SOCKET_HISTORY_SOURCE_DATE = 'date';
+const SOCKET_HISTORY_SOURCE_META = 'meta';
+const SOCKET_HISTORY_SOURCE_UI = 'ui';
+const SOCKET_HISTORY_SOURCE_CLIENT = 'client';
+const SOCKET_HISTORY_SOURCE_SERVER = 'server';
+const SOCKET_HISTORY_SOURCE_TRACK = 'track';
+const SOCKET_HISTORY_SOURCE_INBOX = 'inbox';
+const SOCKET_HISTORY_SOURCE_CHAT = 'chat';
+const SOCKET_HISTORY_SOURCE_DEBUG = 'debug';
+const SOCKET_HISTORY_SOURCE_REPLY_CHAT = 'reply-chat';
+const SOCKET_HISTORY_SOURCE_REPLY_HISTORY = 'reply-history';
+const SOCKET_HISTORY_SOURCE_REPLY_SEND = 'reply-send';
+const SOCKET_HISTORY_SOURCE_REPLY_GROUP = 'reply-group';
+const SOCKET_HISTORY_SOURCE_REPLY_UNREAD = 'reply-unread';
+const SOCKET_HISTORY_SOURCE_REPLY_VIEW = 'reply-view';
+const SOCKET_HISTORY_SOURCE_REPLY_SELECTED = 'reply-selected';
+const SOCKET_HISTORY_SOURCE_REPLY_ACTIVE = 'reply-active';
+const SOCKET_HISTORY_SOURCE_REPLY_OPEN = 'reply-open';
+const SOCKET_HISTORY_SOURCE_REPLY_CLOSE = 'reply-close';
+const SOCKET_HISTORY_SOURCE_REPLY_CLEAR = 'reply-clear';
+const SOCKET_HISTORY_SOURCE_REPLY_RESET = 'reply-reset';
+const SOCKET_HISTORY_SOURCE_REPLY_NOTIFY = 'reply-notify';
+const SOCKET_HISTORY_SOURCE_REPLY_SOUND = 'reply-sound';
+const SOCKET_HISTORY_SOURCE_REPLY_WINDOW = 'reply-window';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVO = 'reply-convo';
+const SOCKET_HISTORY_SOURCE_REPLY_ITEM = 'reply-item';
+const SOCKET_HISTORY_SOURCE_REPLY_CARD = 'reply-card';
+const SOCKET_HISTORY_SOURCE_REPLY_DETAIL = 'reply-detail';
+const SOCKET_HISTORY_SOURCE_REPLY_COMPOSER = 'reply-composer';
+const SOCKET_HISTORY_SOURCE_REPLY_API = 'reply-api';
+const SOCKET_HISTORY_SOURCE_REPLY_FETCH = 'reply-fetch';
+const SOCKET_HISTORY_SOURCE_REPLY_RENDER = 'reply-render';
+const SOCKET_HISTORY_SOURCE_REPLY_SOCKET = 'reply-socket';
+const SOCKET_HISTORY_SOURCE_REPLY_COUNT = 'reply-count';
+const SOCKET_HISTORY_SOURCE_REPLY_STATE = 'reply-state';
+const SOCKET_HISTORY_SOURCE_REPLY_HISTORY_LIMIT = 'reply-history-limit';
+const SOCKET_HISTORY_SOURCE_REPLY_GROUPING = 'reply-grouping';
+const SOCKET_HISTORY_SOURCE_REPLY_MERGE = 'reply-merge';
+const SOCKET_HISTORY_SOURCE_REPLY_RECOVER = 'reply-recover';
+const SOCKET_HISTORY_SOURCE_REPLY_FALLBACK = 'reply-fallback';
+const SOCKET_HISTORY_SOURCE_REPLY_NORMALIZE = 'reply-normalize';
+const SOCKET_HISTORY_SOURCE_REPLY_CONTACT = 'reply-contact';
+const SOCKET_HISTORY_SOURCE_REPLY_NUMBER_FIX = 'reply-number-fix';
+const SOCKET_HISTORY_SOURCE_REPLY_HISTORY_PANEL = 'reply-history-panel';
+const SOCKET_HISTORY_SOURCE_REPLY_CHAT_PANEL = 'reply-chat-panel';
+const SOCKET_HISTORY_SOURCE_REPLY_TOGGLE = 'reply-toggle';
+const SOCKET_HISTORY_SOURCE_REPLY_FORCE_STOP = 'reply-force-stop';
+const SOCKET_HISTORY_SOURCE_REPLY_SEND_BUTTON = 'reply-send-button';
+const SOCKET_HISTORY_SOURCE_REPLY_STOP_BUTTON = 'reply-stop-button';
+const SOCKET_HISTORY_SOURCE_REPLY_START_BUTTON = 'reply-start-button';
+const SOCKET_HISTORY_SOURCE_REPLY_STATUS_BUTTON = 'reply-status-button';
+const SOCKET_HISTORY_SOURCE_REPLY_LAYOUT = 'reply-layout';
+const SOCKET_HISTORY_SOURCE_REPLY_THEME = 'reply-theme';
+const SOCKET_HISTORY_SOURCE_REPLY_MODERN = 'reply-modern';
+const SOCKET_HISTORY_SOURCE_REPLY_QUALITY = 'reply-quality';
+const SOCKET_HISTORY_SOURCE_REPLY_PREMIUM = 'reply-premium';
+const SOCKET_HISTORY_SOURCE_REPLY_WORKSPACE = 'reply-workspace';
+const SOCKET_HISTORY_SOURCE_REPLY_STACKED = 'reply-stacked';
+const SOCKET_HISTORY_SOURCE_REPLY_SPLIT = 'reply-split';
+const SOCKET_HISTORY_SOURCE_REPLY_GROUPED = 'reply-grouped';
+const SOCKET_HISTORY_SOURCE_REPLY_THREAD = 'reply-thread';
+const SOCKET_HISTORY_SOURCE_REPLY_LAST5 = 'reply-last5';
+const SOCKET_HISTORY_SOURCE_REPLY_MANUAL_SEND = 'reply-manual-send';
+const SOCKET_HISTORY_SOURCE_REPLY_WINDOWS_NOTIFICATION = 'reply-windows-notification';
+const SOCKET_HISTORY_SOURCE_REPLY_UNREAD_CLEAR = 'reply-unread-clear';
+const SOCKET_HISTORY_SOURCE_REPLY_TAB_BADGE = 'reply-tab-badge';
+const SOCKET_HISTORY_SOURCE_REPLY_SEEN = 'reply-seen';
+const SOCKET_HISTORY_SOURCE_REPLY_VIEWED = 'reply-viewed';
+const SOCKET_HISTORY_SOURCE_REPLY_SELECTED_CHAT = 'reply-selected-chat';
+const SOCKET_HISTORY_SOURCE_REPLY_HISTORY_FETCH = 'reply-history-fetch';
+const SOCKET_HISTORY_SOURCE_REPLY_HISTORY_RENDER = 'reply-history-render';
+const SOCKET_HISTORY_SOURCE_REPLY_HISTORY_UPDATE = 'reply-history-update';
+const SOCKET_HISTORY_SOURCE_REPLY_HISTORY_MERGE = 'reply-history-merge';
+const SOCKET_HISTORY_SOURCE_REPLY_HISTORY_SYNC = 'reply-history-sync';
+const SOCKET_HISTORY_SOURCE_REPLY_ACCOUNT_LOOKUP = 'reply-account-lookup';
+const SOCKET_HISTORY_SOURCE_REPLY_ACCOUNT_RECOVERY = 'reply-account-recovery';
+const SOCKET_HISTORY_SOURCE_REPLY_ACCOUNT_MATCH = 'reply-account-match';
+const SOCKET_HISTORY_SOURCE_REPLY_CHAT_LOOKUP = 'reply-chat-lookup';
+const SOCKET_HISTORY_SOURCE_REPLY_CHAT_RECOVERY = 'reply-chat-recovery';
+const SOCKET_HISTORY_SOURCE_REPLY_CHAT_MATCH = 'reply-chat-match';
+const SOCKET_HISTORY_SOURCE_REPLY_HISTORY_API = 'reply-history-api';
+const SOCKET_HISTORY_SOURCE_REPLY_SEND_API = 'reply-send-api';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATIONS_API = 'reply-conversations-api';
+const SOCKET_HISTORY_SOURCE_REPLY_LIST_API = 'reply-list-api';
+const SOCKET_HISTORY_SOURCE_REPLY_STORE = 'reply-store';
+const SOCKET_HISTORY_SOURCE_REPLY_PERSIST = 'reply-persist';
+const SOCKET_HISTORY_SOURCE_REPLY_SOCKET_EVENT = 'reply-socket-event';
+const SOCKET_HISTORY_SOURCE_REPLY_MANUAL_PAUSE = 'reply-manual-pause';
+const SOCKET_HISTORY_SOURCE_REPLY_MANUAL_RESUME = 'reply-manual-resume';
+const SOCKET_HISTORY_SOURCE_REPLY_HARD_STOP = 'reply-hard-stop';
+const SOCKET_HISTORY_SOURCE_REPLY_TOGGLE_BUTTON = 'reply-toggle-button';
+const SOCKET_HISTORY_SOURCE_REPLY_FORCE_STOP_BUTTON = 'reply-force-stop-button';
+const SOCKET_HISTORY_SOURCE_REPLY_ACTIONS = 'reply-actions';
+const SOCKET_HISTORY_SOURCE_REPLY_CONTROLS = 'reply-controls';
+const SOCKET_HISTORY_SOURCE_REPLY_SEND_CONTROLS = 'reply-send-controls';
+const SOCKET_HISTORY_SOURCE_REPLY_HISTORY_CONTROLS = 'reply-history-controls';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LIST = 'reply-conversation-list';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_DETAIL = 'reply-conversation-detail';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_OPEN = 'reply-conversation-open';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_SEEN = 'reply-conversation-seen';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_UNREAD = 'reply-conversation-unread';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_BADGE = 'reply-conversation-badge';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_PREVIEW = 'reply-conversation-preview';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_DATE = 'reply-conversation-date';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_NUMBER = 'reply-conversation-number';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_NAME = 'reply-conversation-name';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_ACCOUNT = 'reply-conversation-account';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_MESSAGES = 'reply-conversation-messages';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_SELECTION = 'reply-conversation-selection';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_REFRESH = 'reply-conversation-refresh';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_SOCKET = 'reply-conversation-socket';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_API_LOAD = 'reply-conversation-api-load';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_API_SEND = 'reply-conversation-api-send';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_API_HISTORY = 'reply-conversation-api-history';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_MANUAL_MESSAGE = 'reply-conversation-manual-message';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_MESSAGE = 'reply-conversation-last-message';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_DATE = 'reply-conversation-last-date';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_ACCOUNT = 'reply-conversation-last-account';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_CHAT_ID = 'reply-conversation-last-chat-id';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_NUMBER = 'reply-conversation-last-number';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_NAME = 'reply-conversation-last-name';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_PREVIEW = 'reply-conversation-last-preview';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_DIRECTION = 'reply-conversation-last-direction';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_TYPE = 'reply-conversation-last-type';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_STATUS = 'reply-conversation-last-status';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_UNREAD = 'reply-conversation-last-unread';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED = 'reply-conversation-last-selected';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_ACTIVE = 'reply-conversation-last-active';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_RENDER = 'reply-conversation-last-render';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SOCKET = 'reply-conversation-last-socket';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_API = 'reply-conversation-last-api';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_STORE = 'reply-conversation-last-store';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_HISTORY = 'reply-conversation-last-history';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_GROUP = 'reply-conversation-last-group';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_VIEW = 'reply-conversation-last-view';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_CLEAR = 'reply-conversation-last-clear';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_NOTIFY = 'reply-conversation-last-notify';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SOUND = 'reply-conversation-last-sound';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_BADGE = 'reply-conversation-last-badge';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_CHAT = 'reply-conversation-last-chat';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_COMPOSER = 'reply-conversation-last-composer';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SEND = 'reply-conversation-last-send';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_FETCH = 'reply-conversation-last-fetch';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_LOAD = 'reply-conversation-last-load';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SYNC = 'reply-conversation-last-sync';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_UPDATE = 'reply-conversation-last-update';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_MERGE = 'reply-conversation-last-merge';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_RECOVER = 'reply-conversation-last-recover';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_NORMALIZE = 'reply-conversation-last-normalize';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_FALLBACK = 'reply-conversation-last-fallback';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_LOOKUP = 'reply-conversation-last-lookup';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_ACCOUNT_LOOKUP = 'reply-conversation-last-account-lookup';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_CHAT_LOOKUP = 'reply-conversation-last-chat-lookup';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_HISTORY_LOOKUP = 'reply-conversation-last-history-lookup';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_MESSAGE_LOOKUP = 'reply-conversation-last-message-lookup';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_CONTACT_LOOKUP = 'reply-conversation-last-contact-lookup';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_NUMBER_LOOKUP = 'reply-conversation-last-number-lookup';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_NAME_LOOKUP = 'reply-conversation-last-name-lookup';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_UI = 'reply-conversation-last-ui';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SERVER = 'reply-conversation-last-server';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_CLIENT = 'reply-conversation-last-client';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_RENDERER = 'reply-conversation-last-renderer';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_TRACKED = 'reply-conversation-last-tracked';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_CHAT = 'reply-conversation-last-selected-chat';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_ACCOUNT = 'reply-conversation-last-selected-account';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_NUMBER = 'reply-conversation-last-selected-number';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_NAME = 'reply-conversation-last-selected-name';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_PREVIEW = 'reply-conversation-last-selected-preview';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_DATE = 'reply-conversation-last-selected-date';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_UNREAD = 'reply-conversation-last-selected-unread';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_MESSAGES = 'reply-conversation-last-selected-messages';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_HISTORY = 'reply-conversation-last-selected-history';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_STATUS = 'reply-conversation-last-selected-status';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_ACTIVE = 'reply-conversation-last-selected-active';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_RENDER = 'reply-conversation-last-selected-render';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_NOTIFY = 'reply-conversation-last-selected-notify';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_BADGE = 'reply-conversation-last-selected-badge';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_CLEAR = 'reply-conversation-last-selected-clear';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_VIEW = 'reply-conversation-last-selected-view';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_SOUND = 'reply-conversation-last-selected-sound';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_TAB = 'reply-conversation-last-selected-tab';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_SWITCH = 'reply-conversation-last-selected-switch';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_LOAD = 'reply-conversation-last-selected-load';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_FETCH = 'reply-conversation-last-selected-fetch';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_SEND = 'reply-conversation-last-selected-send';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_SOCKET = 'reply-conversation-last-selected-socket';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_API = 'reply-conversation-last-selected-api';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_MANUAL = 'reply-conversation-last-selected-manual';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_HISTORY_API = 'reply-conversation-last-selected-history-api';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_SEND_API = 'reply-conversation-last-selected-send-api';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_REPLY = 'reply-conversation-last-selected-reply';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_CONVERSATION = 'reply-conversation-last-selected-conversation';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_GROUPING = 'reply-conversation-last-selected-grouping';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_LAST5 = 'reply-conversation-last-selected-last5';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_WINDOWS_NOTIFICATION = 'reply-conversation-last-selected-windows-notification';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_UNREAD_CLEAR = 'reply-conversation-last-selected-unread-clear';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_TOGGLE = 'reply-conversation-last-selected-toggle';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_FORCE_STOP = 'reply-conversation-last-selected-force-stop';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_CONTROLS = 'reply-conversation-last-selected-controls';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_LAYOUT = 'reply-conversation-last-selected-layout';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_THEME = 'reply-conversation-last-selected-theme';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_MODERN = 'reply-conversation-last-selected-modern';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_QUALITY = 'reply-conversation-last-selected-quality';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_PREMIUM = 'reply-conversation-last-selected-premium';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_WORKSPACE = 'reply-conversation-last-selected-workspace';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_STACKED = 'reply-conversation-last-selected-stacked';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_SPLIT = 'reply-conversation-last-selected-split';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_GROUPED = 'reply-conversation-last-selected-grouped';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_THREAD = 'reply-conversation-last-selected-thread';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_MANUAL_SEND = 'reply-conversation-last-selected-manual-send';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_TAB_BADGE = 'reply-conversation-last-selected-tab-badge';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_SEEN = 'reply-conversation-last-selected-seen';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_VIEWED = 'reply-conversation-last-selected-viewed';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_CHAT_PANEL = 'reply-conversation-last-selected-chat-panel';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_HISTORY_PANEL = 'reply-conversation-last-selected-history-panel';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_CONVERSATION_LIST = 'reply-conversation-last-selected-conversation-list';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_CONVERSATION_DETAIL = 'reply-conversation-last-selected-conversation-detail';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_COMPOSER = 'reply-conversation-last-selected-composer';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_ACTIONS = 'reply-conversation-last-selected-actions';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_SEND_CONTROLS = 'reply-conversation-last-selected-send-controls';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_HISTORY_CONTROLS = 'reply-conversation-last-selected-history-controls';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_CONVERSATIONS_API = 'reply-conversation-last-selected-conversations-api';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_LIST_API = 'reply-conversation-last-selected-list-api';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_STORE = 'reply-conversation-last-selected-store';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_PERSIST = 'reply-conversation-last-selected-persist';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_SOCKET_EVENT = 'reply-conversation-last-selected-socket-event';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_MANUAL_PAUSE = 'reply-conversation-last-selected-manual-pause';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_MANUAL_RESUME = 'reply-conversation-last-selected-manual-resume';
+const SOCKET_HISTORY_SOURCE_REPLY_CONVERSATION_LAST_SELECTED_HARD_STOP = 'reply-conversation-last-selected-hard-stop';
 const SPEEDY_MODE_DEFAULTS = {
     delayMin: 1000,
     delayMax: 2000,
@@ -263,28 +622,280 @@ function isTrackedReplyMessage(msg) {
     return numberCandidates.some(number => sentNumbers.has(number));
 }
 
-function buildReplyRecord(msg, accountId, name) {
+function buildReplyRecord(msg, accountId, name, contact) {
     const fromChatId = normalizeChatId(msg?.from);
     const authorChatId = normalizeChatId(msg?.author);
     const participantChatId = normalizeChatId(msg?._data?.author || msg?._data?.participant || msg?._data?.from);
-    const primaryChatId = fromChatId || authorChatId || participantChatId;
-    const number = normalizeNumber(primaryChatId || msg?.from || msg?.author);
-    return {
+    const contactChatId = normalizeChatId(contact?.id?._serialized || contact?.id?.user || contact?.number);
+    const primaryChatId = fromChatId || authorChatId || participantChatId || contactChatId;
+    const number = normalizeNumber(primaryChatId || contact?.number || contact?.id?.user || msg?.from || msg?.author);
+    return normalizeStoredReply({
         id: Date.now(),
-        number: number || (primaryChatId || '-'),
-        name: name,
-        message: msg?.body || msg?._data?.caption || '(medya)',
-        account: accounts[accountId]?.name || accountId,
+        number: number || EMPTY_REPLY_NUMBER,
+        name: String(name || '').trim() || (number || REPLY_GROUP_FALLBACK_LABEL),
+        message: msg?.body || msg?._data?.caption || MEDIA_FALLBACK_TEXT,
+        accountId,
+        account: accounts[accountId]?.name || accountId || UNKNOWN_ACCOUNT_LABEL,
         date: new Date().toISOString(),
-        chatId: primaryChatId || ''
-    };
+        chatId: primaryChatId || '',
+        direction: HISTORY_DIRECTION_IN,
+        type: msg?.type || msg?._data?.type || 'chat'
+    });
 }
 
 function persistReply(reply) {
-    replies.push(reply);
+    const normalized = normalizeStoredReply(reply);
+    replies.push(normalized);
     saveReplies();
-    io.emit('reply-received', reply);
+    io.emit(SOCKET_REPLY_EVENT, normalized);
+    emitReplyConversationUpdate(normalized, SOCKET_HISTORY_SOURCE_REPLY_SOCKET);
 }
+
+function persistManualConversationMessage(entry) {
+    const normalized = normalizeStoredReply({
+        ...entry,
+        direction: HISTORY_DIRECTION_OUT,
+        type: entry?.type || 'chat'
+    });
+    replies.push(normalized);
+    saveReplies();
+    emitReplyConversationUpdate(normalized, SOCKET_HISTORY_SOURCE_MANUAL);
+    io.emit(SOCKET_REPLY_MANUAL_MESSAGE_EVENT, normalized);
+    return normalized;
+}
+
+async function emitConversationHistory(reply, source) {
+    try {
+        const history = await fetchConversationHistory(reply, HISTORY_MESSAGE_LIMIT);
+        io.emit(SOCKET_REPLY_CHAT_UPDATED_EVENT, {
+            source: source || SOCKET_HISTORY_SOURCE_HISTORY,
+            ...history
+        });
+    } catch (error) {
+        logReplyEvent('warn', 'reply-history-emit-failed', {
+            source: source || SOCKET_HISTORY_SOURCE_HISTORY,
+            chatId: reply?.chatId || '',
+            number: reply?.number || '',
+            error: error.message
+        });
+    }
+}
+
+async function sendReplyConversationMessage(payload) {
+    const reply = normalizeStoredReply(payload);
+    const text = toPreviewText(payload?.message, '');
+    if (!text) throw new Error(INVALID_REPLY_MESSAGE_ERROR);
+    const { accountId, client } = getClientForConversation(reply);
+    if (!client) throw new Error(REPLY_NOT_FOUND_ERROR);
+    const chatId = reply.chatId || normalizeChatId(reply.number);
+    if (!chatId) throw new Error(INVALID_REPLY_CONTEXT_ERROR);
+    await client.sendMessage(chatId, text);
+    appendSentLog({
+        number: reply.number,
+        account: accounts[accountId]?.name || accountId || reply.account || UNKNOWN_ACCOUNT_LABEL,
+        accountId,
+        chatId,
+        status: MANUAL_REPLY_STATUS,
+        date: new Date().toISOString(),
+        manualReply: true
+    });
+    const saved = persistManualConversationMessage({
+        id: Date.now(),
+        number: reply.number,
+        name: reply.name,
+        chatId,
+        accountId,
+        account: accounts[accountId]?.name || accountId || reply.account || UNKNOWN_ACCOUNT_LABEL,
+        message: text,
+        date: new Date().toISOString(),
+        direction: HISTORY_DIRECTION_OUT,
+        type: 'chat'
+    });
+    await emitConversationHistory(saved, SOCKET_HISTORY_SOURCE_REPLY_SEND);
+    return saved;
+}
+
+function getRepliesResponse() {
+    return {
+        items: replies.map(normalizeStoredReply),
+        conversations: buildGroupedConversations()
+    };
+}
+
+function setManualPause(value) {
+    manualPauseRequested = !!value;
+}
+
+function getSendStatePayload() {
+    return {
+        isSending: sendingInProgress,
+        isPaused: manualPauseRequested,
+        canForceStop: sendingInProgress || manualPauseRequested
+    };
+}
+
+function emitSendState() {
+    io.emit('send-state', getSendStatePayload());
+}
+
+function markSendingStopped() {
+    sendingInProgress = false;
+    manualPauseRequested = false;
+    emitSendState();
+}
+
+function markSendingStarted() {
+    sendingInProgress = true;
+    manualPauseRequested = false;
+    emitSendState();
+}
+
+async function waitWhileManuallyPaused(index, total) {
+    while (manualPauseRequested && !stopRequested) {
+        await sleep(SEND_MANUAL_PAUSE_POLL_MS);
+    }
+    if (!manualPauseRequested) {
+        io.emit(SOCKET_SEND_RESUMED_EVENT, {
+            [SOCKET_INDEX_KEY]: index,
+            [SOCKET_TOTAL_KEY]: total,
+            [SOCKET_REASON_KEY]: MANUAL_PAUSE_REASON,
+            [SOCKET_MANUAL_PAUSE_FLAG]: true,
+            accountCount: Object.keys(accounts).filter(id => accounts[id]?.status === 'bağlı' && accounts[id]?.client).length
+        });
+    }
+}
+
+function startManualPause(index, total) {
+    if (!manualPauseRequested) return;
+    io.emit(SOCKET_SEND_PAUSED_EVENT, {
+        [SOCKET_INDEX_KEY]: index,
+        [SOCKET_TOTAL_KEY]: total,
+        [SOCKET_REASON_KEY]: MANUAL_PAUSE_REASON,
+        [SOCKET_MANUAL_PAUSE_FLAG]: true
+    });
+    io.emit(SOCKET_SEND_LOG_EVENT, { text: SEND_PAUSED_LOG_TEXT, type: 'warn' });
+}
+
+function resumeManualPause(index, total) {
+    io.emit(SOCKET_SEND_LOG_EVENT, { text: SEND_RESUMED_LOG_TEXT, type: 'info' });
+    io.emit(SOCKET_SEND_RESUMED_EVENT, {
+        [SOCKET_INDEX_KEY]: index,
+        [SOCKET_TOTAL_KEY]: total,
+        [SOCKET_REASON_KEY]: MANUAL_PAUSE_REASON,
+        [SOCKET_MANUAL_PAUSE_FLAG]: true,
+        accountCount: Object.keys(accounts).filter(id => accounts[id]?.status === 'bağlı' && accounts[id]?.client).length
+    });
+}
+
+function shouldWaitForManualPause() {
+    return manualPauseRequested && !stopRequested;
+}
+
+function handleManualPauseStart(index, total) {
+    if (manualPauseRequested) startManualPause(index, total);
+}
+
+function handleManualPauseResume(index, total) {
+    if (!manualPauseRequested) resumeManualPause(index, total);
+}
+
+function getReplyHistoryQuery(req) {
+    return {
+        chatId: normalizeChatId(req.query[CHAT_ID_QUERY_KEY]),
+        accountId: String(req.query[ACCOUNT_ID_QUERY_KEY] || '').trim(),
+        limit: Math.max(1, Math.min(parseInt(req.query[HISTORY_LIMIT_QUERY_KEY], 10) || HISTORY_LIMIT_DEFAULT, HISTORY_LIMIT_HARD_MAX))
+    };
+}
+
+function getConversationFromQuery(query) {
+    const matches = replies.map(normalizeStoredReply).filter(item => {
+        if (query.chatId) return item.chatId === query.chatId;
+        return false;
+    });
+    if (query.accountId) {
+        const byAccount = matches.find(item => item.accountId === query.accountId || getConversationAccountId(item) === query.accountId);
+        if (byAccount) return byAccount;
+    }
+    return matches[0] || null;
+}
+
+function getConversationFromBody(body) {
+    const chatId = normalizeChatId(body?.chatId);
+    const accountId = String(body?.accountId || '').trim();
+    const candidates = replies.map(normalizeStoredReply).filter(item => item.chatId === chatId || (!chatId && item.number === normalizeNumber(body?.number)));
+    if (accountId) {
+        const byAccount = candidates.find(item => item.accountId === accountId || getConversationAccountId(item) === accountId);
+        if (byAccount) return byAccount;
+    }
+    if (candidates.length) return candidates[0];
+    return normalizeStoredReply({
+        chatId,
+        number: normalizeNumber(body?.number || chatId),
+        name: String(body?.name || '').trim(),
+        accountId,
+        account: body?.account || UNKNOWN_ACCOUNT_LABEL,
+        message: body?.message || EMPTY_MESSAGE_FALLBACK,
+        date: new Date().toISOString(),
+        direction: HISTORY_DIRECTION_OUT,
+        type: 'chat'
+    });
+}
+
+function normalizeRepliesOnLoad() {
+    replies = replies.map(normalizeStoredReply);
+}
+
+normalizeRepliesOnLoad();
+emitSendState();
+app.get('/api/send/state', (req, res) => {
+    res.json(getSendStatePayload());
+});
+
+app.post('/api/send/pause', (req, res) => {
+    if (!sendingInProgress) {
+        return res.status(400).json({ error: SEND_NOT_ACTIVE_ERROR });
+    }
+    if (manualPauseRequested) {
+        return res.status(400).json({ error: SEND_ALREADY_PAUSED_ERROR });
+    }
+    setManualPause(true);
+    emitSendState();
+    res.json({ success: true, paused: true });
+});
+
+app.post('/api/send/resume', (req, res) => {
+    if (!sendingInProgress) {
+        return res.status(400).json({ error: SEND_NOT_ACTIVE_ERROR });
+    }
+    if (!manualPauseRequested) {
+        return res.status(400).json({ error: SEND_NOT_PAUSED_ERROR });
+    }
+    setManualPause(false);
+    emitSendState();
+    res.json({ success: true, paused: false });
+});
+
+app.get('/api/replies/history', async (req, res) => {
+    try {
+        const query = getReplyHistoryQuery(req);
+        const conversation = getConversationFromQuery(query);
+        if (!conversation) return res.status(404).json({ error: REPLY_NOT_FOUND_ERROR });
+        const history = await fetchConversationHistory({ ...conversation, accountId: query.accountId || conversation.accountId }, query.limit);
+        res.json(history);
+    } catch (error) {
+        res.status(500).json({ error: error.message || REPLY_HISTORY_FETCH_ERROR });
+    }
+});
+
+app.post('/api/replies/send', async (req, res) => {
+    try {
+        const conversation = getConversationFromBody(req.body || {});
+        const saved = await sendReplyConversationMessage({ ...conversation, ...req.body });
+        res.json({ success: true, item: saved });
+    } catch (error) {
+        res.status(500).json({ error: error.message || REPLY_SEND_ERROR });
+    }
+});
 
 function logReplyEvent(level, message, extra) {
     remoteLog(level, 'reply', message, extra);
@@ -320,16 +931,18 @@ function attachReplyListeners(client, accountId) {
 
             processedReplyMessageIds.add(serializedId);
             const contact = await msg.getContact().catch(() => null);
-            const name = contact?.pushname || contact?.name || normalizeNumber(authorChatId || fromChatId) || fromChatId || 'Bilinmeyen';
-            const reply = buildReplyRecord(msg, accountId, name);
+            const fallbackNumber = normalizeNumber(contact?.number || contact?.id?.user || authorChatId || fromChatId);
+            const name = contact?.pushname || contact?.name || fallbackNumber || fromChatId || UNKNOWN_CONTACT_NAME;
+            const reply = buildReplyRecord(msg, accountId, name, contact);
             persistReply(reply);
+            await emitConversationHistory(reply, HISTORY_REFRESH_REASON_INCOMING);
             logReplyEvent('info', 'reply-stored', {
                 accountId,
                 messageId: serializedId,
                 number: reply.number,
                 chatId: reply.chatId,
                 name,
-                bodyPreview: String(reply.message || '').slice(0, 120)
+                bodyPreview: String(reply.message || '').slice(0, LOG_PREVIEW_LIMIT)
             });
             console.log(`📩 Dönüş: ${reply.number} (${name})`);
         } catch (e) {
@@ -389,6 +1002,144 @@ function logRendererEvent(level, message, extra) {
     remoteLog(level, 'renderer', message, extra);
 }
 
+function toPreviewText(value, fallback) {
+    const text = String(value || '').trim();
+    return text ? text.slice(0, MESSAGE_TRIM_LIMIT) : (fallback || EMPTY_MESSAGE_FALLBACK);
+}
+
+function normalizeReplyIdentity(reply) {
+    const chatId = normalizeChatId(reply?.chatId || reply?.from || reply?.to);
+    const number = normalizeNumber(reply?.number || chatId || reply?.from || reply?.to);
+    return {
+        chatId,
+        number: number || EMPTY_REPLY_NUMBER,
+        accountId: reply?.accountId || '',
+        account: reply?.account || UNKNOWN_ACCOUNT_LABEL,
+        name: String(reply?.name || '').trim() || (number || REPLY_GROUP_FALLBACK_LABEL)
+    };
+}
+
+function normalizeStoredReply(reply) {
+    const identity = normalizeReplyIdentity(reply);
+    return {
+        id: reply?.id || Date.now(),
+        chatId: identity.chatId,
+        number: identity.number,
+        name: identity.name,
+        accountId: identity.accountId,
+        account: identity.account,
+        message: toPreviewText(reply?.message, MEDIA_FALLBACK_TEXT),
+        date: reply?.date || new Date().toISOString(),
+        direction: reply?.direction || HISTORY_DIRECTION_IN,
+        type: reply?.type || 'chat'
+    };
+}
+
+function buildConversationKey(reply) {
+    const normalized = normalizeStoredReply(reply);
+    return normalized.chatId || normalized.number || String(normalized.id);
+}
+
+function getConversationAccountId(reply) {
+    if (reply?.accountId && accounts[reply.accountId]?.client) return reply.accountId;
+    const accountName = String(reply?.account || '').trim();
+    if (accountName) {
+        const matched = Object.keys(accounts).find(id => id === accountName || accounts[id]?.name === accountName);
+        if (matched && accounts[matched]?.client) return matched;
+    }
+    const firstConnected = Object.keys(accounts).find(id => accounts[id]?.client);
+    return firstConnected || '';
+}
+
+function getClientForConversation(reply) {
+    const accountId = getConversationAccountId(reply);
+    const client = accountId ? accounts[accountId]?.client : null;
+    return { accountId, client };
+}
+
+function serializeChatMessage(msg, fallbackAccountId) {
+    const body = toPreviewText(msg?.body || msg?._data?.caption, MEDIA_FALLBACK_TEXT);
+    const rawChatId = normalizeChatId(msg?.fromMe ? (msg?.to || msg?.from) : (msg?.from || msg?.to));
+    const number = normalizeNumber(rawChatId || msg?.from || msg?.to) || EMPTY_REPLY_NUMBER;
+    return {
+        id: msg?.id?._serialized || msg?.id?.id || `${rawChatId}-${msg?.timestamp || Date.now()}-${body}`,
+        chatId: rawChatId,
+        number,
+        name: '',
+        accountId: fallbackAccountId || '',
+        account: accounts[fallbackAccountId]?.name || fallbackAccountId || UNKNOWN_ACCOUNT_LABEL,
+        message: body,
+        date: msg?.timestamp ? new Date(msg.timestamp * 1000).toISOString() : new Date().toISOString(),
+        direction: msg?.fromMe ? HISTORY_DIRECTION_OUT : HISTORY_DIRECTION_IN,
+        type: msg?.type || msg?._data?.type || 'chat'
+    };
+}
+
+async function fetchConversationHistory(reply, limit) {
+    const normalized = normalizeStoredReply(reply);
+    const { accountId, client } = getClientForConversation(normalized);
+    if (!client) throw new Error(REPLY_NOT_FOUND_ERROR);
+    const chatId = normalized.chatId || normalizeChatId(normalized.number);
+    if (!chatId) throw new Error(REPLY_NOT_FOUND_ERROR);
+    const chat = await client.getChatById(chatId);
+    const amount = Math.max(1, Math.min(parseInt(limit, 10) || HISTORY_FETCH_DEFAULT_LIMIT, HISTORY_LIMIT_HARD_MAX));
+    const messages = await chat.fetchMessages({ limit: amount });
+    return {
+        accountId,
+        account: accounts[accountId]?.name || accountId || normalized.account,
+        chatId,
+        number: normalized.number,
+        name: normalized.name,
+        messages: messages.slice(-amount).map(msg => serializeChatMessage(msg, accountId))
+    };
+}
+
+function buildGroupedConversations() {
+    const grouped = new Map();
+    replies.map(normalizeStoredReply).forEach(reply => {
+        const key = buildConversationKey(reply);
+        const current = grouped.get(key);
+        if (!current) {
+            grouped.set(key, {
+                key,
+                chatId: reply.chatId,
+                number: reply.number,
+                name: reply.name,
+                accountId: reply.accountId || getConversationAccountId(reply),
+                account: reply.account,
+                lastMessage: reply.message,
+                lastDate: reply.date,
+                count: 1,
+                lastReply: reply
+            });
+            return;
+        }
+        current.count += 1;
+        if (new Date(reply.date).getTime() >= new Date(current.lastDate).getTime()) {
+            current.chatId = reply.chatId || current.chatId;
+            current.number = reply.number || current.number;
+            current.name = reply.name || current.name;
+            current.accountId = reply.accountId || current.accountId;
+            current.account = reply.account || current.account;
+            current.lastMessage = reply.message;
+            current.lastDate = reply.date;
+            current.lastReply = reply;
+        }
+    });
+    return Array.from(grouped.values()).sort((a, b) => new Date(b.lastDate).getTime() - new Date(a.lastDate).getTime());
+}
+
+function emitReplyConversationUpdate(reply, source) {
+    const normalized = normalizeStoredReply(reply);
+    const key = buildConversationKey(normalized);
+    const conversation = buildGroupedConversations().find(item => item.key === key);
+    if (!conversation) return;
+    io.emit(SOCKET_REPLY_CONVERSATION_UPDATED_EVENT, {
+        source: source || SOCKET_HISTORY_SOURCE_REPLY,
+        conversation
+    });
+}
+
 app.post('/api/log', (req, res) => {
     const { level, message, extra } = req.body || {};
     logRendererEvent(level || 'info', message || 'renderer-log', extra || {});
@@ -427,7 +1178,9 @@ loadSentLog();
 loadNotes();
 loadProxyConfig();
 loadReplies();
+normalizeRepliesOnLoad();
 rebuildSentNumbers();
+emitSendState();
 
 // ─── Tor VPN ────────────────────────────────────────────────────────────────
 const TOR_DIR = path.join(DATA_DIR, 'tor');
@@ -1103,7 +1856,15 @@ app.get('/api/sent-log', (req, res) => {
 // \u2500\u2500\u2500 Replies (d\u00f6n\u00fc\u015fler) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
 app.get('/api/replies', (req, res) => {
-    res.json(replies);
+    res.json(getRepliesResponse());
+});
+
+app.get('/api/replies/conversations', (req, res) => {
+    res.json(buildGroupedConversations());
+});
+
+app.get('/api/replies/raw', (req, res) => {
+    res.json(replies.map(normalizeStoredReply));
 });
 
 // ─── Notes CRUD ─────────────────────────────────────────────────────────────
