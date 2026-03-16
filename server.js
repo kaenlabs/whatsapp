@@ -153,6 +153,7 @@ let sentLog = [];
 let savedNotes = [];
 let replies = [];
 let sentNumbers = new Set();
+let processedReplyMessageIds = new Set();
 let proxyConfig = { enabled: false, type: 'http', host: '', port: '', username: '', password: '' };
 
 function loadMessagesFromFile() {
@@ -742,29 +743,34 @@ app.post('/api/accounts', (req, res) => {
             io.emit('qr-done', { id: accountId });
             console.log(`✅ Hesap bağlandı: ${accountId}`);
         }
+    });
 
-        // Gelen mesaj dinleyici (dönüş takibi)
-        client.on('message', async (msg) => {
-            try {
-                if (msg.fromMe) return;
-                const from = msg.from.replace('@c.us', '').replace('@s.whatsapp.net', '').replace(/\D/g, '');
-                if (!from || !sentNumbers.has(from)) return;
-                const contact = await msg.getContact();
-                const name = contact?.pushname || contact?.name || from;
-                const reply = {
-                    id: Date.now(),
-                    number: from,
-                    name: name,
-                    message: msg.body || '(medya)',
-                    account: accounts[accountId]?.name || accountId,
-                    date: new Date().toISOString()
-                };
-                replies.push(reply);
-                saveReplies();
-                io.emit('reply-received', reply);
-                console.log(`📩 Dönüş: ${from} (${name})`);
-            } catch(e) { /* sessizce geç */ }
-        });
+    // Gelen mesaj dinleyici (dönüş takibi)
+    client.on('message', async (msg) => {
+        try {
+            if (msg.fromMe) return;
+            const from = msg.from.replace('@c.us', '').replace('@s.whatsapp.net', '').replace(/\D/g, '');
+            if (!from || !sentNumbers.has(from)) return;
+
+            const messageId = msg.id?._serialized || msg.id?.id || `${msg.from}-${msg.timestamp || Date.now()}-${msg.body || ''}`;
+            if (processedReplyMessageIds.has(messageId)) return;
+            processedReplyMessageIds.add(messageId);
+
+            const contact = await msg.getContact();
+            const name = contact?.pushname || contact?.name || from;
+            const reply = {
+                id: Date.now(),
+                number: from,
+                name: name,
+                message: msg.body || '(medya)',
+                account: accounts[accountId]?.name || accountId,
+                date: new Date().toISOString()
+            };
+            replies.push(reply);
+            saveReplies();
+            io.emit('reply-received', reply);
+            console.log(`📩 Dönüş: ${from} (${name})`);
+        } catch(e) { /* sessizce geç */ }
     });
 
     client.on('auth_failure', () => {
