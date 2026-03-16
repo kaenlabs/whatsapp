@@ -1695,6 +1695,7 @@ socket.on('sent-log-update', function(data) {
 });
 socket.on('reply-received', function(r) {
     restoreReplyConversationIfNeeded(r);
+    requestReplyCapabilitiesAfterReply(resolveReplyKey(r));
     upsertReplyItem(r);
     maybeIncrementReplyUnread(r);
     renderReplies();
@@ -1754,11 +1755,155 @@ socket.on('reply-manual-message', function(item) {
 
 function ensureReplyAudio() {
     if (!replyAudio) {
-        replyAudio = new Audio('reply-notification.wav');
+        replyAudio = new Audio('/reply-notification.wav');
         replyAudio.preload = 'auto';
-        replyAudio.volume = 0.7;
+        replyAudio.volume = 0.82;
     }
     return replyAudio;
+}
+
+function requestNotificationPermissionOnInteraction() {
+    if (!('Notification' in window)) return;
+    if (Notification.permission !== 'default') return;
+    Notification.requestPermission().catch(function() {});
+}
+
+function maybeRefreshRepliesFromServer(key) {
+    var hasConversation = !!replyConversations.find(function(item) { return item.key === key; });
+    if (hasConversation) return Promise.resolve();
+    return fetch('/api/replies').then(safeJson).then(function(data) {
+        setReplyData(data);
+        renderReplies();
+        renderReplyDetail();
+    }).catch(function() {});
+}
+
+function getReplyConversationRequestParams(item) {
+    var conversation = normalizeReplyConversation(item || selectedReplyConversation || {});
+    return {
+        key: conversation.key,
+        chatId: conversation.chatId,
+        number: conversation.number,
+        name: conversation.name,
+        accountId: conversation.accountId,
+        account: conversation.account
+    };
+}
+
+function buildReplyHistoryUrl(item) {
+    var params = getReplyConversationRequestParams(item);
+    var search = new URLSearchParams();
+    if (params.chatId) search.set('chatId', params.chatId);
+    if (params.accountId) search.set('accountId', params.accountId);
+    if (!params.chatId && params.number) search.set('number', params.number);
+    search.set('limit', '5');
+    return '/api/replies/history?' + search.toString();
+}
+
+function loadReplyHistory(item, options) {
+    var opts = options || {};
+    var context = getReplyTargetConversation(item);
+    var params = getReplyConversationRequestParams(context);
+    var key = params.key || resolveReplyKey(context);
+    if (!key) return Promise.resolve([]);
+    if (!opts.force && replyHistoryCache[key] && replyHistoryCache[key].length) {
+        if (!opts.silent) renderReplyDetail();
+        return Promise.resolve(replyHistoryCache[key]);
+    }
+    replyHistoryLoading = true;
+    if (!opts.silent) {
+        replyChatStatusMessage = 'Mesaj geçmişi yükleniyor...';
+        renderReplyDetail();
+    }
+    return fetch(buildReplyHistoryUrl(params)).then(safeJson).then(function(data) {
+        if (data.error) throw new Error(data.error);
+        replyHistoryCache[key] = normalizeReplyHistoryMessages(data.messages || [], context);
+        if (selectedReplyKey === key) {
+            selectedReplyConversation = applyReplyPrefsToConversation({
+                key: key,
+                chatId: data.chatId || params.chatId,
+                number: data.number || params.number,
+                name: data.name || params.name,
+                accountId: data.accountId || params.accountId,
+                account: data.account || params.account,
+                lastMessage: replyHistoryCache[key].length ? replyHistoryCache[key][replyHistoryCache[key].length - 1].message : (selectedReplyConversation && selectedReplyConversation.lastMessage) || '',
+                lastDate: replyHistoryCache[key].length ? replyHistoryCache[key][replyHistoryCache[key].length - 1].date : (selectedReplyConversation && selectedReplyConversation.lastDate) || new Date().toISOString(),
+                count: getReplyCountForKey(key) || 1
+            });
+        }
+        replyChatStatusMessage = '';
+        return replyHistoryCache[key];
+    }).catch(function(err) {
+        replyHistoryCache[key] = replyHistoryCache[key] || [];
+        replyChatStatusMessage = err.message || 'Mesaj geçmişi yüklenemedi';
+        return replyHistoryCache[key];
+    }).finally(function() {
+        replyHistoryLoading = false;
+        if (selectedReplyKey === key || !opts.silent) renderReplyDetail();
+    });
+}
+
+function sendReplyMessage() {
+    if (!selectedReplyConversation || replySendInProgress) return;
+    var input = document.getElementById('reply-compose-input');
+    if (!input) return;
+    var message = input.value.trim();
+    if (!message) return;
+    var conversation = getReplyTargetConversation(selectedReplyConversation);
+    var payload = getReplyConversationRequestParams(conversation);
+    payload.message = message;
+    replySendInProgress = true;
+    replyChatStatusMessage = 'Mesaj gönderiliyor...';
+    renderReplyDetail();
+    fetch('/api/replies/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    }).then(safeJson).then(function(data) {
+        if (data.error) throw new Error(data.error);
+        input.value = '';
+        replyChatStatusMessage = 'Mesaj gönderildi';
+        if (data.item) {
+            upsertReplyItem(data.item);
+            loadReplyHistory(data.item, { force: true, silent: true });
+        } else {
+            loadReplyHistory(conversation, { force: true, silent: true });
+        }
+        renderReplies();
+        renderReplyDetail();
+    }).catch(function(err) {
+        replyChatStatusMessage = err.message || 'Mesaj gönderilemedi';
+        renderReplyDetail();
+        alert(replyChatStatusMessage);
+    }).finally(function() {
+        replySendInProgress = false;
+        renderReplyDetail();
+    });
+}
+
+function ensureReplyConversationVisible(key) {
+    if (!key) return;
+    maybeRefreshRepliesFromServer(key);
+}
+
+function requestNotificationPermissionIfNeeded() {
+    if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission().catch(function() {});
+    }
+}
+
+function requestReplyCapabilitiesOnInteraction() {
+    requestNotificationPermissionOnInteraction();
+    unlockReplyAudio();
+}
+
+function requestReplyCapabilitiesOnLoad() {
+    requestNotificationPermissionIfNeeded();
+    primeReplyAudio();
+}
+
+function requestReplyCapabilitiesAfterReply(key) {
+    ensureReplyConversationVisible(key);
 }
 
 function unlockReplyAudio() {
@@ -2214,12 +2359,6 @@ function updateSpeedyModeUiOnLoad() {
     if (document.getElementById('chk-speedy').checked) toggleSpeedyMode();
 }
 
-function requestNotificationPermissionIfNeeded() {
-    if ('Notification' in window && Notification.permission === 'default') {
-        Notification.requestPermission();
-    }
-}
-
 function sendClientLog(level, message, extra) {
     fetch('/api/log', {
         method: 'POST',
@@ -2339,10 +2478,13 @@ function normalizeReplyItem(item) {
 function normalizeReplyConversation(item) {
     var normalized = normalizeReplyItem(item || {});
     var pref = normalizeReplyPref(item && item.pref ? item.pref : item);
+    var fallbackKey = String((item && item.key) || '').trim();
+    var chatId = String(item && item.chatId || normalized.chatId || '').trim();
+    var number = String(item && item.number || normalized.number || '').trim();
     return {
-        key: String(item && item.key || resolveReplyKey(normalized)),
-        chatId: String(item && item.chatId || normalized.chatId || '').trim(),
-        number: String(item && item.number || normalized.number || '').trim(),
+        key: fallbackKey || chatId || number || String(normalized.id || '').trim(),
+        chatId: chatId,
+        number: number,
         name: String(item && item.name || normalized.name || '').trim(),
         accountId: String(item && item.accountId || normalized.accountId || '').trim(),
         account: String(item && item.account || normalized.account || '').trim(),
@@ -2352,6 +2494,76 @@ function normalizeReplyConversation(item) {
         muted: !!pref.muted,
         hidden: !!pref.hidden
     };
+}
+
+function getReplyConversationKey(item) {
+    var normalized = normalizeReplyConversation(item || {});
+    return normalized.key;
+}
+
+function resolveReplyKey(item) {
+    if (!item) return '';
+    return getReplyConversationKey(item);
+}
+
+function syncReplyConversationIdentifiers(target, source) {
+    if (!target || !source) return target;
+    if (!target.chatId && source.chatId) target.chatId = source.chatId;
+    if (!target.number && source.number) target.number = source.number;
+    if (!target.name && source.name) target.name = source.name;
+    if (!target.accountId && source.accountId) target.accountId = source.accountId;
+    if (!target.account && source.account) target.account = source.account;
+    target.key = getReplyConversationKey(target);
+    return target;
+}
+
+function resolveReplyConversationByKey(key) {
+    if (!key) return null;
+    return replyConversations.find(function(item) {
+        return getReplyConversationKey(item) === key;
+    }) || null;
+}
+
+function ensureReplyConversationFromItems(key) {
+    var existing = resolveReplyConversationByKey(key);
+    if (existing) return existing;
+    var matched = repliesData.filter(function(item) { return resolveReplyKey(item) === key; });
+    if (!matched.length) return null;
+    var latest = matched.slice().sort(function(a, b) {
+        return new Date(b.date).getTime() - new Date(a.date).getTime();
+    })[0];
+    var built = normalizeReplyConversation({
+        key: key,
+        chatId: latest.chatId,
+        number: latest.number,
+        name: latest.name,
+        accountId: latest.accountId,
+        account: latest.account,
+        lastMessage: latest.message,
+        lastDate: latest.date,
+        count: matched.length
+    });
+    upsertReplyConversation(built);
+    return resolveReplyConversationByKey(key);
+}
+
+function getReplyTargetConversation(item) {
+    var key = resolveReplyKey(item);
+    return resolveReplyConversationByKey(key) || ensureReplyConversationFromItems(key) || normalizeReplyConversation(item || {});
+}
+
+function normalizeReplyHistoryItem(item, fallback) {
+    var normalized = normalizeReplyItem(item);
+    if (fallback) syncReplyConversationIdentifiers(normalized, fallback);
+    return normalized;
+}
+
+function normalizeReplyHistoryMessages(messages, fallback) {
+    return (messages || []).map(function(item) {
+        return normalizeReplyHistoryItem(item, fallback);
+    }).sort(function(a, b) {
+        return new Date(a.date).getTime() - new Date(b.date).getTime();
+    }).slice(-5);
 }
 
 function normalizeReplyPref(pref) {
@@ -2472,11 +2684,6 @@ function normalizeReplyHistoryMessages(messages) {
     }).slice(-5);
 }
 
-function resolveReplyKey(item) {
-    if (!item) return '';
-    return String(item.key || item.chatId || item.number || item.id || '').trim();
-}
-
 function getReplyDisplayName(item) {
     var normalized = normalizeReplyItem(item);
     return normalized.name || normalized.number || normalized.chatId || 'Bilinmeyen kişi';
@@ -2499,7 +2706,7 @@ function hideStartupIntro() {
 }
 
 function scheduleStartupIntroHide() {
-    setTimeout(hideStartupIntro, 1400);
+    setTimeout(hideStartupIntro, 2600);
 }
 
 function formatReplyDate(value) {
@@ -3368,11 +3575,10 @@ checkTorStatus();
 updateSendBtnProxy();
 updateModeStyles();
 updateSpeedyModeUiOnLoad();
-requestNotificationPermissionIfNeeded();
-primeReplyAudio();
+requestReplyCapabilitiesOnLoad();
 
 ['click','keydown'].forEach(function(evt) {
-    window.addEventListener(evt, unlockReplyAudio, { once: true });
+    window.addEventListener(evt, requestReplyCapabilitiesOnInteraction, { once: true });
 });
 
 // Proxy inputları değişince testi sıfırla
