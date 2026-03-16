@@ -513,10 +513,12 @@ const SENT_LOG_FILE = path.join(DATA_DIR, 'sent-log.json');
 const NOTES_FILE = path.join(DATA_DIR, 'notes.json');
 const PROXY_FILE = path.join(DATA_DIR, 'proxy.json');
 const REPLIES_FILE = path.join(DATA_DIR, 'replies.json');
+const REPLY_PREFS_FILE = path.join(DATA_DIR, 'reply-prefs.json');
 let savedMessages = [];
 let sentLog = [];
 let savedNotes = [];
 let replies = [];
+let replyPrefs = {};
 let sentNumbers = new Set();
 let successfulChats = new Set();
 let processedReplyMessageIds = new Set();
@@ -572,6 +574,21 @@ function saveProxyConfig() {
     fs.writeFileSync(PROXY_FILE, JSON.stringify(proxyConfig, null, 2));
 }
 
+function loadReplyPrefs() {
+    try {
+        if (fs.existsSync(REPLY_PREFS_FILE)) {
+            const parsed = JSON.parse(fs.readFileSync(REPLY_PREFS_FILE, 'utf8'));
+            replyPrefs = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+        }
+    } catch (e) {
+        replyPrefs = {};
+    }
+}
+
+function saveReplyPrefs() {
+    fs.writeFileSync(REPLY_PREFS_FILE, JSON.stringify(replyPrefs, null, 2));
+}
+
 function loadReplies() {
     try {
         if (fs.existsSync(REPLIES_FILE)) {
@@ -607,9 +624,372 @@ function normalizeChatId(value) {
     const raw = String(value || '').trim();
     if (!raw) return '';
     if (/@s\.whatsapp\.net$/i.test(raw)) return raw.replace(/@s\.whatsapp\.net$/i, '@c.us').toLowerCase();
-    if (/@c\.us$/i.test(raw) || /@g\.us$/i.test(raw)) return raw.toLowerCase();
+    if (/@c\.us$/i.test(raw) || /@g\.us$/i.test(raw) || /@lid$/i.test(raw)) return raw.toLowerCase();
     const digits = normalizeNumber(raw);
     return digits ? (digits + '@c.us') : raw.toLowerCase();
+}
+
+function buildChatIdCandidates(reply) {
+    const normalized = normalizeStoredReply(reply || {});
+    const number = normalizeNumber(normalized.number || normalized.chatId);
+    const candidates = [
+        normalized.chatId,
+        reply?.chatId,
+        reply?.from,
+        reply?.to,
+        number ? (number + '@lid') : '',
+        number ? (number + '@c.us') : '',
+        number ? (number + '@s.whatsapp.net') : ''
+    ].map(normalizeChatId).filter(Boolean);
+    return Array.from(new Set(candidates));
+}
+
+async function resolveConversationChatId(client, reply) {
+    const candidates = buildChatIdCandidates(reply);
+    for (const candidate of candidates) {
+        try {
+            await client.getChatById(candidate);
+            return candidate;
+        } catch (_) {}
+    }
+    const number = normalizeNumber(reply?.number || reply?.chatId);
+    if (number && typeof client.getNumberId === 'function') {
+        try {
+            const numberId = await client.getNumberId(number);
+            const resolved = normalizeChatId(numberId?._serialized || numberId?.user || '');
+            if (resolved) return resolved;
+        } catch (_) {}
+    }
+    return candidates[0] || '';
+}
+
+async function getChatForConversation(client, reply) {
+    const resolvedChatId = await resolveConversationChatId(client, reply);
+    if (!resolvedChatId) throw new Error(REPLY_NOT_FOUND_ERROR);
+    const chat = await client.getChatById(resolvedChatId);
+    return { chat, chatId: resolvedChatId };
+}
+
+function trackSuccessfulChat(chatId, number) {
+    const normalizedChatId = normalizeChatId(chatId);
+    const normalizedNumber = normalizeNumber(number || chatId);
+    if (normalizedChatId) successfulChats.add(normalizedChatId);
+    if (normalizedNumber) {
+        sentNumbers.add(normalizedNumber);
+        successfulChats.add(normalizedNumber + '@c.us');
+        successfulChats.add(normalizedNumber + '@s.whatsapp.net');
+        successfulChats.add(normalizedNumber + '@lid');
+    }
+}
+
+function appendSuccessfulSend(number, accountName, chatId) {
+    appendSentLog({
+        number,
+        account: accountName,
+        chatId: normalizeChatId(chatId),
+        status: 'başarılı',
+        date: new Date().toISOString()
+    });
+    trackSuccessfulChat(chatId, number);
+}
+
+function appendFailedSend(number, accountName, chatId, error) {
+    appendSentLog({
+        number,
+        account: accountName,
+        chatId: normalizeChatId(chatId),
+        status: 'hata',
+        error,
+        date: new Date().toISOString()
+    });
+}
+
+function logSendEvent(level, message, extra) {
+    remoteLog(level, 'send', message, extra);
+}
+
+function logClientLifecycle(level, message, extra) {
+    remoteLog(level, 'client', message, extra);
+}
+
+function logRendererEvent(level, message, extra) {
+    remoteLog(level, 'renderer', message, extra);
+}
+
+function toPreviewText(value, fallback) {
+    const text = String(value || '').trim();
+    return text ? text.slice(0, MESSAGE_TRIM_LIMIT) : (fallback || EMPTY_MESSAGE_FALLBACK);
+}
+
+function normalizeReplyIdentity(reply) {
+    const chatId = normalizeChatId(reply?.chatId || reply?.from || reply?.to);
+    const number = normalizeNumber(reply?.number || chatId || reply?.from || reply?.to);
+    return {
+        chatId,
+        number: number || EMPTY_REPLY_NUMBER,
+        accountId: reply?.accountId || '',
+        account: reply?.account || UNKNOWN_ACCOUNT_LABEL,
+        name: String(reply?.name || '').trim() || (number || REPLY_GROUP_FALLBACK_LABEL)
+    };
+}
+
+function normalizeStoredReply(reply) {
+    const identity = normalizeReplyIdentity(reply);
+    return {
+        id: reply?.id || Date.now(),
+        chatId: identity.chatId,
+        number: identity.number,
+        name: identity.name,
+        accountId: identity.accountId,
+        account: identity.account,
+        message: toPreviewText(reply?.message, MEDIA_FALLBACK_TEXT),
+        date: reply?.date || new Date().toISOString(),
+        direction: reply?.direction || HISTORY_DIRECTION_IN,
+        type: reply?.type || 'chat'
+    };
+}
+
+function buildConversationKey(reply) {
+    const normalized = normalizeStoredReply(reply);
+    return normalized.chatId || normalized.number || String(normalized.id);
+}
+
+function normalizeReplyPrefEntry(value) {
+    return {
+        muted: !!(value && value.muted),
+        hidden: !!(value && value.hidden),
+        updatedAt: value && value.updatedAt ? value.updatedAt : ''
+    };
+}
+
+function getReplyPref(key) {
+    if (!key) return normalizeReplyPrefEntry();
+    return normalizeReplyPrefEntry(replyPrefs[key]);
+}
+
+function setReplyPref(key, patch) {
+    if (!key) return normalizeReplyPrefEntry();
+    const next = {
+        ...getReplyPref(key),
+        ...(patch || {}),
+        updatedAt: new Date().toISOString()
+    };
+    if (!next.muted && !next.hidden) delete replyPrefs[key];
+    else replyPrefs[key] = next;
+    saveReplyPrefs();
+    return getReplyPref(key);
+}
+
+function getConversationWithPrefs(conversation) {
+    if (!conversation) return null;
+    const pref = getReplyPref(conversation.key);
+    return {
+        ...conversation,
+        muted: pref.muted,
+        hidden: pref.hidden
+    };
+}
+
+function shouldSuppressReplyUi(reply) {
+    return getReplyPref(buildConversationKey(reply)).muted;
+}
+
+function getConversationAccountId(reply) {
+    if (reply?.accountId && accounts[reply.accountId]?.client) return reply.accountId;
+    const accountName = String(reply?.account || '').trim();
+    if (accountName) {
+        const matched = Object.keys(accounts).find(id => id === accountName || accounts[id]?.name === accountName);
+        if (matched && accounts[matched]?.client) return matched;
+    }
+    const firstConnected = Object.keys(accounts).find(id => accounts[id]?.client);
+    return firstConnected || '';
+}
+
+function getClientForConversation(reply) {
+    const accountId = getConversationAccountId(reply);
+    const client = accountId ? accounts[accountId]?.client : null;
+    return { accountId, client };
+}
+
+function serializeChatMessage(msg, fallbackAccountId) {
+    const body = toPreviewText(msg?.body || msg?._data?.caption, MEDIA_FALLBACK_TEXT);
+    const rawChatId = normalizeChatId(msg?.fromMe ? (msg?.to || msg?.from) : (msg?.from || msg?.to));
+    const number = normalizeNumber(rawChatId || msg?.from || msg?.to) || EMPTY_REPLY_NUMBER;
+    return {
+        id: msg?.id?._serialized || msg?.id?.id || `${rawChatId}-${msg?.timestamp || Date.now()}-${body}`,
+        chatId: rawChatId,
+        number,
+        name: '',
+        accountId: fallbackAccountId || '',
+        account: accounts[fallbackAccountId]?.name || fallbackAccountId || UNKNOWN_ACCOUNT_LABEL,
+        message: body,
+        date: msg?.timestamp ? new Date(msg.timestamp * 1000).toISOString() : new Date().toISOString(),
+        direction: msg?.fromMe ? HISTORY_DIRECTION_OUT : HISTORY_DIRECTION_IN,
+        type: msg?.type || msg?._data?.type || 'chat'
+    };
+}
+
+async function fetchConversationHistory(reply, limit) {
+    const normalized = normalizeStoredReply(reply);
+    const { accountId, client } = getClientForConversation(normalized);
+    if (!client) throw new Error(REPLY_NOT_FOUND_ERROR);
+    const { chat, chatId } = await getChatForConversation(client, normalized);
+    const amount = Math.max(1, Math.min(parseInt(limit, 10) || HISTORY_FETCH_DEFAULT_LIMIT, HISTORY_LIMIT_HARD_MAX));
+    const messages = await chat.fetchMessages({ limit: amount });
+    return {
+        accountId,
+        account: accounts[accountId]?.name || accountId || normalized.account,
+        chatId,
+        number: normalized.number,
+        name: normalized.name,
+        messages: messages.slice(-amount).map(msg => serializeChatMessage(msg, accountId))
+    };
+}
+
+function buildGroupedConversations() {
+    const grouped = new Map();
+    replies.map(normalizeStoredReply).forEach(reply => {
+        const key = buildConversationKey(reply);
+        const pref = getReplyPref(key);
+        if (pref.hidden) return;
+        const current = grouped.get(key);
+        if (!current) {
+            grouped.set(key, {
+                key,
+                chatId: reply.chatId,
+                number: reply.number,
+                name: reply.name,
+                accountId: reply.accountId || getConversationAccountId(reply),
+                account: reply.account,
+                lastMessage: reply.message,
+                lastDate: reply.date,
+                count: 1,
+                lastReply: reply,
+                muted: pref.muted,
+                hidden: pref.hidden
+            });
+            return;
+        }
+        current.count += 1;
+        current.muted = pref.muted;
+        current.hidden = pref.hidden;
+        if (new Date(reply.date).getTime() >= new Date(current.lastDate).getTime()) {
+            current.chatId = reply.chatId || current.chatId;
+            current.number = reply.number || current.number;
+            current.name = reply.name || current.name;
+            current.accountId = reply.accountId || current.accountId;
+            current.account = reply.account || current.account;
+            current.lastMessage = reply.message;
+            current.lastDate = reply.date;
+            current.lastReply = reply;
+        }
+    });
+    return Array.from(grouped.values())
+        .map(getConversationWithPrefs)
+        .sort((a, b) => new Date(b.lastDate).getTime() - new Date(a.lastDate).getTime());
+}
+
+function emitReplyConversationUpdate(reply, source) {
+    const normalized = normalizeStoredReply(reply);
+    const key = buildConversationKey(normalized);
+    const conversation = buildGroupedConversations().find(item => item.key === key);
+    io.emit(SOCKET_REPLY_CONVERSATION_UPDATED_EVENT, {
+        source: source || SOCKET_HISTORY_SOURCE_REPLY,
+        key,
+        conversation: conversation || null,
+        pref: getReplyPref(key)
+    });
+}
+
+function emitReplyPrefUpdate(key, source) {
+    io.emit(SOCKET_REPLY_CONVERSATION_UPDATED_EVENT, {
+        source: source || 'prefs',
+        key,
+        conversation: buildGroupedConversations().find(item => item.key === key) || null,
+        pref: getReplyPref(key)
+    });
+}
+
+function findReplyConversation(query) {
+    const chatId = normalizeChatId(query?.chatId || '');
+    const number = normalizeNumber(query?.number || query?.chatId || '');
+    const key = String(query?.key || chatId || number || '').trim();
+    const normalizedReplies = replies.map(normalizeStoredReply);
+    if (key) {
+        const byKey = normalizedReplies.find(item => buildConversationKey(item) === key);
+        if (byKey) return byKey;
+    }
+    if (chatId) {
+        const byChat = normalizedReplies.find(item => item.chatId === chatId);
+        if (byChat) return byChat;
+    }
+    if (number) {
+        const byNumber = normalizedReplies.find(item => item.number === number);
+        if (byNumber) return byNumber;
+    }
+    return null;
+}
+
+function getReplyPayloadForQuery(query) {
+    const conversation = findReplyConversation(query);
+    if (conversation) return conversation;
+    const key = String(query?.key || query?.chatId || query?.number || '').trim();
+    if (!key) throw new Error(REPLY_NOT_FOUND_ERROR);
+    return normalizeStoredReply({
+        chatId: query?.chatId || '',
+        number: query?.number || '',
+        accountId: query?.accountId || '',
+        account: query?.account || '',
+        name: query?.name || key,
+        message: '',
+        date: new Date().toISOString()
+    });
+}
+
+function getReplyPrefState() {
+    return Object.keys(replyPrefs).reduce((acc, key) => {
+        const pref = normalizeReplyPrefEntry(replyPrefs[key]);
+        if (pref.muted || pref.hidden) acc[key] = pref;
+        return acc;
+    }, {});
+}
+
+function setConversationMuted(reply, muted) {
+    const key = buildConversationKey(reply);
+    if (!key) throw new Error(REPLY_NOT_FOUND_ERROR);
+    const pref = setReplyPref(key, { muted: !!muted, hidden: false });
+    emitReplyPrefUpdate(key, 'mute');
+    return { key, pref };
+}
+
+function hideConversation(reply) {
+    const key = buildConversationKey(reply);
+    if (!key) throw new Error(REPLY_NOT_FOUND_ERROR);
+    const pref = setReplyPref(key, { hidden: true });
+    emitReplyPrefUpdate(key, 'hide');
+    return { key, pref };
+}
+
+function reviveConversation(reply) {
+    const key = buildConversationKey(reply);
+    if (!key) return;
+    if (!getReplyPref(key).hidden) return;
+    setReplyPref(key, { hidden: false });
+    emitReplyPrefUpdate(key, 'revive');
+}
+
+function getReplyConversationApiResponse(key) {
+    return {
+        key,
+        pref: getReplyPref(key),
+        conversation: buildGroupedConversations().find(item => item.key === key) || null
+    };
+}
+
+function appendSentLog(entry) {
+    sentLog.push(entry);
+    saveSentLog();
+    io.emit('sent-log-update', sentLog);
 }
 
 function isTrackedReplyMessage(msg) {
@@ -645,9 +1025,13 @@ function buildReplyRecord(msg, accountId, name, contact) {
 
 function persistReply(reply) {
     const normalized = normalizeStoredReply(reply);
+    reviveConversation(normalized);
     replies.push(normalized);
     saveReplies();
-    io.emit(SOCKET_REPLY_EVENT, normalized);
+    io.emit(SOCKET_REPLY_EVENT, {
+        ...normalized,
+        muted: shouldSuppressReplyUi(normalized)
+    });
     emitReplyConversationUpdate(normalized, SOCKET_HISTORY_SOURCE_REPLY_SOCKET);
 }
 
@@ -657,10 +1041,14 @@ function persistManualConversationMessage(entry) {
         direction: HISTORY_DIRECTION_OUT,
         type: entry?.type || 'chat'
     });
+    reviveConversation(normalized);
     replies.push(normalized);
     saveReplies();
     emitReplyConversationUpdate(normalized, SOCKET_HISTORY_SOURCE_MANUAL);
-    io.emit(SOCKET_REPLY_MANUAL_MESSAGE_EVENT, normalized);
+    io.emit(SOCKET_REPLY_MANUAL_MESSAGE_EVENT, {
+        ...normalized,
+        muted: shouldSuppressReplyUi(normalized)
+    });
     return normalized;
 }
 
@@ -687,7 +1075,7 @@ async function sendReplyConversationMessage(payload) {
     if (!text) throw new Error(INVALID_REPLY_MESSAGE_ERROR);
     const { accountId, client } = getClientForConversation(reply);
     if (!client) throw new Error(REPLY_NOT_FOUND_ERROR);
-    const chatId = reply.chatId || normalizeChatId(reply.number);
+    const chatId = await resolveConversationChatId(client, reply);
     if (!chatId) throw new Error(INVALID_REPLY_CONTEXT_ERROR);
     await client.sendMessage(chatId, text);
     appendSentLog({
@@ -699,6 +1087,7 @@ async function sendReplyConversationMessage(payload) {
         date: new Date().toISOString(),
         manualReply: true
     });
+    trackSuccessfulChat(chatId, reply.number);
     const saved = persistManualConversationMessage({
         id: Date.now(),
         number: reply.number,
@@ -718,7 +1107,8 @@ async function sendReplyConversationMessage(payload) {
 function getRepliesResponse() {
     return {
         items: replies.map(normalizeStoredReply),
-        conversations: buildGroupedConversations()
+        conversations: buildGroupedConversations(),
+        prefs: getReplyPrefState()
     };
 }
 
@@ -897,6 +1287,31 @@ app.post('/api/replies/send', async (req, res) => {
     }
 });
 
+app.get('/api/replies/prefs', (_req, res) => {
+    res.json({ prefs: getReplyPrefState() });
+});
+
+app.post('/api/replies/mute', (req, res) => {
+    try {
+        const reply = getReplyPayloadForQuery(req.body || {});
+        const muted = req.body && typeof req.body.muted === 'boolean' ? req.body.muted : true;
+        const { key } = setConversationMuted(reply, muted);
+        res.json({ success: true, ...getReplyConversationApiResponse(key) });
+    } catch (error) {
+        res.status(400).json({ error: error.message || REPLY_NOT_FOUND_ERROR });
+    }
+});
+
+app.post('/api/replies/delete', (req, res) => {
+    try {
+        const reply = getReplyPayloadForQuery(req.body || {});
+        const { key } = hideConversation(reply);
+        res.json({ success: true, ...getReplyConversationApiResponse(key) });
+    } catch (error) {
+        res.status(400).json({ error: error.message || REPLY_NOT_FOUND_ERROR });
+    }
+});
+
 function logReplyEvent(level, message, extra) {
     remoteLog(level, 'reply', message, extra);
 }
@@ -957,189 +1372,6 @@ function attachReplyListeners(client, accountId) {
     client.on('message_create', (msg) => handleReplyMessage('message_create', msg));
 }
 
-function trackSuccessfulChat(chatId, number) {
-    const normalizedChatId = normalizeChatId(chatId);
-    const normalizedNumber = normalizeNumber(number || chatId);
-    if (normalizedChatId) successfulChats.add(normalizedChatId);
-    if (normalizedNumber) {
-        sentNumbers.add(normalizedNumber);
-        successfulChats.add(normalizedNumber + '@c.us');
-        successfulChats.add(normalizedNumber + '@s.whatsapp.net');
-    }
-}
-
-function appendSuccessfulSend(number, accountName, chatId) {
-    appendSentLog({
-        number,
-        account: accountName,
-        chatId: normalizeChatId(chatId),
-        status: 'başarılı',
-        date: new Date().toISOString()
-    });
-    trackSuccessfulChat(chatId, number);
-}
-
-function appendFailedSend(number, accountName, chatId, error) {
-    appendSentLog({
-        number,
-        account: accountName,
-        chatId: normalizeChatId(chatId),
-        status: 'hata',
-        error,
-        date: new Date().toISOString()
-    });
-}
-
-function logSendEvent(level, message, extra) {
-    remoteLog(level, 'send', message, extra);
-}
-
-function logClientLifecycle(level, message, extra) {
-    remoteLog(level, 'client', message, extra);
-}
-
-function logRendererEvent(level, message, extra) {
-    remoteLog(level, 'renderer', message, extra);
-}
-
-function toPreviewText(value, fallback) {
-    const text = String(value || '').trim();
-    return text ? text.slice(0, MESSAGE_TRIM_LIMIT) : (fallback || EMPTY_MESSAGE_FALLBACK);
-}
-
-function normalizeReplyIdentity(reply) {
-    const chatId = normalizeChatId(reply?.chatId || reply?.from || reply?.to);
-    const number = normalizeNumber(reply?.number || chatId || reply?.from || reply?.to);
-    return {
-        chatId,
-        number: number || EMPTY_REPLY_NUMBER,
-        accountId: reply?.accountId || '',
-        account: reply?.account || UNKNOWN_ACCOUNT_LABEL,
-        name: String(reply?.name || '').trim() || (number || REPLY_GROUP_FALLBACK_LABEL)
-    };
-}
-
-function normalizeStoredReply(reply) {
-    const identity = normalizeReplyIdentity(reply);
-    return {
-        id: reply?.id || Date.now(),
-        chatId: identity.chatId,
-        number: identity.number,
-        name: identity.name,
-        accountId: identity.accountId,
-        account: identity.account,
-        message: toPreviewText(reply?.message, MEDIA_FALLBACK_TEXT),
-        date: reply?.date || new Date().toISOString(),
-        direction: reply?.direction || HISTORY_DIRECTION_IN,
-        type: reply?.type || 'chat'
-    };
-}
-
-function buildConversationKey(reply) {
-    const normalized = normalizeStoredReply(reply);
-    return normalized.chatId || normalized.number || String(normalized.id);
-}
-
-function getConversationAccountId(reply) {
-    if (reply?.accountId && accounts[reply.accountId]?.client) return reply.accountId;
-    const accountName = String(reply?.account || '').trim();
-    if (accountName) {
-        const matched = Object.keys(accounts).find(id => id === accountName || accounts[id]?.name === accountName);
-        if (matched && accounts[matched]?.client) return matched;
-    }
-    const firstConnected = Object.keys(accounts).find(id => accounts[id]?.client);
-    return firstConnected || '';
-}
-
-function getClientForConversation(reply) {
-    const accountId = getConversationAccountId(reply);
-    const client = accountId ? accounts[accountId]?.client : null;
-    return { accountId, client };
-}
-
-function serializeChatMessage(msg, fallbackAccountId) {
-    const body = toPreviewText(msg?.body || msg?._data?.caption, MEDIA_FALLBACK_TEXT);
-    const rawChatId = normalizeChatId(msg?.fromMe ? (msg?.to || msg?.from) : (msg?.from || msg?.to));
-    const number = normalizeNumber(rawChatId || msg?.from || msg?.to) || EMPTY_REPLY_NUMBER;
-    return {
-        id: msg?.id?._serialized || msg?.id?.id || `${rawChatId}-${msg?.timestamp || Date.now()}-${body}`,
-        chatId: rawChatId,
-        number,
-        name: '',
-        accountId: fallbackAccountId || '',
-        account: accounts[fallbackAccountId]?.name || fallbackAccountId || UNKNOWN_ACCOUNT_LABEL,
-        message: body,
-        date: msg?.timestamp ? new Date(msg.timestamp * 1000).toISOString() : new Date().toISOString(),
-        direction: msg?.fromMe ? HISTORY_DIRECTION_OUT : HISTORY_DIRECTION_IN,
-        type: msg?.type || msg?._data?.type || 'chat'
-    };
-}
-
-async function fetchConversationHistory(reply, limit) {
-    const normalized = normalizeStoredReply(reply);
-    const { accountId, client } = getClientForConversation(normalized);
-    if (!client) throw new Error(REPLY_NOT_FOUND_ERROR);
-    const chatId = normalized.chatId || normalizeChatId(normalized.number);
-    if (!chatId) throw new Error(REPLY_NOT_FOUND_ERROR);
-    const chat = await client.getChatById(chatId);
-    const amount = Math.max(1, Math.min(parseInt(limit, 10) || HISTORY_FETCH_DEFAULT_LIMIT, HISTORY_LIMIT_HARD_MAX));
-    const messages = await chat.fetchMessages({ limit: amount });
-    return {
-        accountId,
-        account: accounts[accountId]?.name || accountId || normalized.account,
-        chatId,
-        number: normalized.number,
-        name: normalized.name,
-        messages: messages.slice(-amount).map(msg => serializeChatMessage(msg, accountId))
-    };
-}
-
-function buildGroupedConversations() {
-    const grouped = new Map();
-    replies.map(normalizeStoredReply).forEach(reply => {
-        const key = buildConversationKey(reply);
-        const current = grouped.get(key);
-        if (!current) {
-            grouped.set(key, {
-                key,
-                chatId: reply.chatId,
-                number: reply.number,
-                name: reply.name,
-                accountId: reply.accountId || getConversationAccountId(reply),
-                account: reply.account,
-                lastMessage: reply.message,
-                lastDate: reply.date,
-                count: 1,
-                lastReply: reply
-            });
-            return;
-        }
-        current.count += 1;
-        if (new Date(reply.date).getTime() >= new Date(current.lastDate).getTime()) {
-            current.chatId = reply.chatId || current.chatId;
-            current.number = reply.number || current.number;
-            current.name = reply.name || current.name;
-            current.accountId = reply.accountId || current.accountId;
-            current.account = reply.account || current.account;
-            current.lastMessage = reply.message;
-            current.lastDate = reply.date;
-            current.lastReply = reply;
-        }
-    });
-    return Array.from(grouped.values()).sort((a, b) => new Date(b.lastDate).getTime() - new Date(a.lastDate).getTime());
-}
-
-function emitReplyConversationUpdate(reply, source) {
-    const normalized = normalizeStoredReply(reply);
-    const key = buildConversationKey(normalized);
-    const conversation = buildGroupedConversations().find(item => item.key === key);
-    if (!conversation) return;
-    io.emit(SOCKET_REPLY_CONVERSATION_UPDATED_EVENT, {
-        source: source || SOCKET_HISTORY_SOURCE_REPLY,
-        conversation
-    });
-}
-
 app.post('/api/log', (req, res) => {
     const { level, message, extra } = req.body || {};
     logRendererEvent(level || 'info', message || 'renderer-log', extra || {});
@@ -1177,6 +1409,7 @@ loadMessagesFromFile();
 loadSentLog();
 loadNotes();
 loadProxyConfig();
+loadReplyPrefs();
 loadReplies();
 normalizeRepliesOnLoad();
 rebuildSentNumbers();

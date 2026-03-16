@@ -66,6 +66,129 @@
             pointer-events:none;
             z-index:0;
         }
+        .app-intro {
+            position:fixed;
+            inset:0;
+            z-index:20;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            background:radial-gradient(circle at top, rgba(139,92,246,0.16), transparent 28%), rgba(4,6,14,0.96);
+            backdrop-filter:blur(16px);
+            transition:opacity .5s ease, visibility .5s ease;
+        }
+        .app-intro.hidden {
+            opacity:0;
+            visibility:hidden;
+            pointer-events:none;
+        }
+        .app-intro-card {
+            width:min(520px, calc(100vw - 32px));
+            padding:28px 24px;
+            border-radius:28px;
+            border:1px solid rgba(167,139,250,0.22);
+            background:linear-gradient(180deg, rgba(13,16,31,0.94), rgba(10,13,27,0.96));
+            box-shadow:0 30px 90px rgba(2,6,23,0.48);
+            text-align:center;
+            position:relative;
+            overflow:hidden;
+        }
+        .app-intro-card::before {
+            content:'';
+            position:absolute;
+            inset:0 0 auto 0;
+            height:1px;
+            background:linear-gradient(90deg, transparent, rgba(255,255,255,0.28), transparent);
+        }
+        .app-intro-badge {
+            display:inline-flex;
+            align-items:center;
+            gap:8px;
+            padding:8px 14px;
+            border-radius:999px;
+            background:rgba(139,92,246,0.14);
+            border:1px solid rgba(167,139,250,0.22);
+            color:var(--purple-xl);
+            font-size:12px;
+            font-weight:800;
+            letter-spacing:.4px;
+        }
+        .app-intro-title {
+            margin-top:18px;
+            font-size:28px;
+            font-weight:900;
+            color:#f8fbff;
+            letter-spacing:.2px;
+        }
+        .app-intro-subtitle {
+            margin-top:10px;
+            color:#c1cae0;
+            font-size:14px;
+            line-height:1.6;
+        }
+        .app-intro-loader {
+            width:84px;
+            height:84px;
+            margin:24px auto 18px;
+            border-radius:24px;
+            display:grid;
+            place-items:center;
+            position:relative;
+            background:linear-gradient(135deg, rgba(59,130,246,0.18), rgba(139,92,246,0.20));
+            box-shadow:inset 0 1px 0 rgba(255,255,255,0.12), 0 20px 42px rgba(37,99,235,0.18);
+        }
+        .app-intro-loader::before {
+            content:'';
+            width:52px;
+            height:52px;
+            border-radius:50%;
+            border:3px solid rgba(255,255,255,0.12);
+            border-top-color:#a78bfa;
+            border-right-color:#60a5fa;
+            animation:introSpin 1s linear infinite;
+        }
+        .app-intro-loader::after {
+            content:'✦';
+            position:absolute;
+            font-size:18px;
+            color:#fff;
+            font-weight:900;
+        }
+        .app-intro-steps {
+            display:flex;
+            justify-content:center;
+            gap:10px;
+            flex-wrap:wrap;
+            margin-top:16px;
+        }
+        .app-intro-step {
+            padding:8px 12px;
+            border-radius:12px;
+            background:rgba(255,255,255,0.04);
+            border:1px solid rgba(255,255,255,0.06);
+            font-size:12px;
+            color:#cdd6ea;
+        }
+        @keyframes introSpin {
+            to { transform:rotate(360deg); }
+        }
+        @media (max-width: 640px) {
+            .app-intro-title { font-size:24px; }
+            .app-intro-card { padding:24px 18px; border-radius:22px; }
+        }
+        .header {
+            position:relative;
+            z-index:1;
+            background:linear-gradient(135deg, rgba(17,22,41,0.94), rgba(9,12,24,0.92));
+            border-bottom:1px solid var(--border-strong);
+            box-shadow:var(--shadow-lg);
+            padding:18px 24px;
+            display:flex;
+            align-items:center;
+            gap:16px;
+            flex-shrink:0;
+            backdrop-filter:blur(14px);
+        }
         .header {
             position:relative;
             z-index:1;
@@ -924,7 +1047,7 @@
             text-overflow:ellipsis;
             white-space:nowrap;
         }
-        .reply-unread-chip, .reply-count-chip {
+        .reply-unread-chip, .reply-count-chip, .reply-muted-chip {
             display:inline-flex;
             align-items:center;
             justify-content:center;
@@ -944,6 +1067,60 @@
             background:rgba(255,255,255,0.06);
             color:#cbd5e1;
             border:1px solid rgba(255,255,255,0.07);
+        }
+        .reply-muted-chip {
+            min-width:auto;
+            background:rgba(148,163,184,0.12);
+            color:#cbd5e1;
+            border:1px solid rgba(148,163,184,0.18);
+            padding:0 7px;
+        }
+        .reply-conversation-item.muted {
+            background:rgba(148,163,184,0.05);
+            border-color:rgba(148,163,184,0.12);
+        }
+        .reply-conversation-item.muted .reply-avatar {
+            background:linear-gradient(135deg, rgba(100,116,139,0.88), rgba(148,163,184,0.88));
+        }
+        .reply-conversation-actions {
+            display:flex;
+            align-items:center;
+            gap:6px;
+            flex-shrink:0;
+            margin-left:auto;
+        }
+        .reply-action-btn {
+            width:30px;
+            height:30px;
+            border-radius:10px;
+            border:1px solid rgba(255,255,255,0.08);
+            background:rgba(255,255,255,0.04);
+            color:#dbeafe;
+            display:inline-flex;
+            align-items:center;
+            justify-content:center;
+            cursor:pointer;
+            transition:background .18s ease, border-color .18s ease, transform .18s ease;
+        }
+        .reply-action-btn:hover {
+            transform:translateY(-1px);
+            background:rgba(96,165,250,0.14);
+            border-color:rgba(96,165,250,0.26);
+        }
+        .reply-action-btn.delete:hover {
+            background:rgba(239,68,68,0.14);
+            border-color:rgba(239,68,68,0.28);
+            color:#fecaca;
+        }
+        .reply-action-btn.active {
+            background:rgba(148,163,184,0.16);
+            border-color:rgba(148,163,184,0.3);
+            color:#f8fafc;
+        }
+        .reply-action-btn:disabled {
+            opacity:0.45;
+            cursor:not-allowed;
+            transform:none;
         }
         .reply-detail {
             display:grid;
@@ -1017,6 +1194,19 @@
     </style>
 </head>
 <body>
+<div id="app-intro" class="app-intro">
+    <div class="app-intro-card">
+        <span class="app-intro-badge">⚡ WhatsApp Sender v2.3.8</span>
+        <div class="app-intro-loader"></div>
+        <div class="app-intro-title">Çalışma alanı hazırlanıyor</div>
+        <div class="app-intro-subtitle">Hesaplar, sohbetler, gönderim akışı ve canlı reply merkezi yükleniyor. Birkaç saniye içinde uygulama hazır.</div>
+        <div class="app-intro-steps">
+            <span class="app-intro-step">Hesaplar eşleniyor</span>
+            <span class="app-intro-step">Reply merkezi hazırlanıyor</span>
+            <span class="app-intro-step">Akıllı gönderim akışı yükleniyor</span>
+        </div>
+    </div>
+</div>
 
 <div class="header header-spread">
     <div class="header-title-row">
@@ -1383,6 +1573,7 @@ var replyAudio = null;
 var replyAudioUnlocked = false;
 var repliesData = [];
 var replyConversations = [];
+var replyPrefs = {};
 var replyUnreadMap = {};
 var replySeenConversationKeys = {};
 var selectedReplyKey = '';
@@ -1392,6 +1583,7 @@ var replyHistoryLoading = false;
 var replySendInProgress = false;
 var replyChatStatusMessage = '';
 var activeTab = 'log';
+var startupIntroHidden = false;
 
 // ── Tabs ────────────────────────────────────────────────
 function switchTab(name) {
@@ -1502,32 +1694,46 @@ socket.on('sent-log-update', function(data) {
     renderSentLog();
 });
 socket.on('reply-received', function(r) {
+    restoreReplyConversationIfNeeded(r);
     upsertReplyItem(r);
-    incrementReplyUnread(resolveReplyKey(r));
+    maybeIncrementReplyUnread(r);
     renderReplies();
     if (selectedReplyKey && resolveReplyKey(r) === selectedReplyKey) {
         loadReplyHistory(selectedReplyConversation || r, { silent: true, force: true });
     }
-    playReplySound();
+    maybePlayReplyEffects(r);
     sendClientLog('info', 'reply-received-ui', {
         number: r.number,
         chatId: r.chatId || '',
         name: r.name || '',
-        messagePreview: String(r.message || '').slice(0, 120)
+        messagePreview: String(r.message || '').slice(0, 120),
+        muted: !!isReplyMuted(r)
     });
-    log('\u{1F4E9} D\u00F6n\u00FC\u015F: ' + (r.number || '-') + (r.name ? ' (' + r.name + ')' : '') + ' \u2014 ' + String(r.message || '').substring(0, 60), 'info');
-    showReplyNotification(r);
+    log('\u{1F4E9} D\u00F6n\u00FC\u015F: ' + (r.number || '-') + (r.name ? ' (' + r.name + ')' : '') + ' \u2014 ' + String(r.message || '').substring(0, 60) + (isReplyMuted(r) ? ' [sessiz]' : ''), 'info');
 });
 socket.on('reply-conversation-updated', function(payload) {
-    if (!payload || !payload.conversation) return;
-    upsertReplyConversation(payload.conversation);
+    if (!payload) return;
+    handleReplyConversationSocketPayload(payload);
     renderReplies();
+    renderReplyDetail();
 });
 socket.on('reply-chat-updated', function(payload) {
     if (!payload) return;
     var key = resolveReplyKey(payload);
     if (!key) return;
     replyHistoryCache[key] = normalizeReplyHistoryMessages(payload.messages || []);
+    if (payload.chatId || payload.number) {
+        upsertReplyConversation({
+            key: key,
+            chatId: payload.chatId,
+            number: payload.number,
+            name: payload.name,
+            accountId: payload.accountId,
+            account: payload.account,
+            lastMessage: (payload.messages || []).length ? payload.messages[payload.messages.length - 1].message : '',
+            lastDate: (payload.messages || []).length ? payload.messages[payload.messages.length - 1].date : new Date().toISOString()
+        });
+    }
     if (selectedReplyKey && selectedReplyKey === key) {
         renderReplyDetail();
         if (activeTab === 'replies') markConversationSeen(key);
@@ -2132,6 +2338,7 @@ function normalizeReplyItem(item) {
 
 function normalizeReplyConversation(item) {
     var normalized = normalizeReplyItem(item || {});
+    var pref = normalizeReplyPref(item && item.pref ? item.pref : item);
     return {
         key: String(item && item.key || resolveReplyKey(normalized)),
         chatId: String(item && item.chatId || normalized.chatId || '').trim(),
@@ -2141,8 +2348,122 @@ function normalizeReplyConversation(item) {
         account: String(item && item.account || normalized.account || '').trim(),
         lastMessage: String(item && item.lastMessage || normalized.message || '').trim() || '(mesaj yok)',
         lastDate: item && item.lastDate ? item.lastDate : normalized.date,
-        count: Math.max(1, parseInt(item && item.count, 10) || 1)
+        count: Math.max(1, parseInt(item && item.count, 10) || 1),
+        muted: !!pref.muted,
+        hidden: !!pref.hidden
     };
+}
+
+function normalizeReplyPref(pref) {
+    return {
+        muted: !!(pref && pref.muted),
+        hidden: !!(pref && pref.hidden),
+        updatedAt: String(pref && pref.updatedAt || '').trim()
+    };
+}
+
+function getReplyPref(key) {
+    return normalizeReplyPref(replyPrefs[key]);
+}
+
+function setReplyPrefState(key, pref) {
+    if (!key) return;
+    var normalized = normalizeReplyPref(pref);
+    if (!normalized.muted && !normalized.hidden) delete replyPrefs[key];
+    else replyPrefs[key] = normalized;
+}
+
+function applyReplyPrefsToConversation(item) {
+    var normalized = normalizeReplyConversation(item);
+    var pref = getReplyPref(normalized.key);
+    normalized.muted = !!pref.muted;
+    normalized.hidden = !!pref.hidden;
+    return normalized;
+}
+
+function isReplyMuted(item) {
+    return !!getReplyPref(resolveReplyKey(item)).muted;
+}
+
+function shouldSuppressReplyUi(item) {
+    return isReplyMuted(item);
+}
+
+function removeReplyConversationLocally(key) {
+    if (!key) return;
+    replyConversations = replyConversations.filter(function(item) { return item.key !== key; });
+    if (selectedReplyKey === key) {
+        selectedReplyKey = '';
+        selectedReplyConversation = null;
+    }
+    delete replyUnreadMap[key];
+    delete replySeenConversationKeys[key];
+    delete replyHistoryCache[key];
+}
+
+function upsertReplyConversationWithPrefs(item) {
+    upsertReplyConversation(applyReplyPrefsToConversation(item));
+}
+
+function syncReplyPrefsState(prefs) {
+    replyPrefs = {};
+    Object.keys(prefs || {}).forEach(function(key) {
+        setReplyPrefState(key, prefs[key]);
+    });
+}
+
+function syncReplyPrefsOntoConversations() {
+    replyConversations = replyConversations
+        .map(applyReplyPrefsToConversation)
+        .filter(function(item) { return !item.hidden; });
+}
+
+function syncReplyPrefsOntoHistory() {
+    if (selectedReplyConversation) {
+        selectedReplyConversation = applyReplyPrefsToConversation(selectedReplyConversation);
+        if (selectedReplyConversation.hidden) {
+            selectedReplyConversation = null;
+            selectedReplyKey = '';
+        }
+    }
+}
+
+function applyReplyPrefMutation(key, pref, conversation) {
+    setReplyPrefState(key, pref);
+    if (pref && pref.hidden) {
+        removeReplyConversationLocally(key);
+        return;
+    }
+    if (conversation) upsertReplyConversationWithPrefs(conversation);
+    else syncReplyPrefsOntoConversations();
+    syncReplyPrefsOntoHistory();
+}
+
+function replyActionPayload(item) {
+    var normalized = normalizeReplyConversation(item || selectedReplyConversation || {});
+    return {
+        key: normalized.key,
+        chatId: normalized.chatId,
+        number: normalized.number,
+        name: normalized.name,
+        accountId: normalized.accountId,
+        account: normalized.account
+    };
+}
+
+function mutateReplyConversation(url, body, successMessage) {
+    return fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    }).then(safeJson).then(function(data) {
+        if (data.error) throw new Error(data.error);
+        applyReplyPrefMutation(data.key || body.key, data.pref || {}, data.conversation || null);
+        renderReplies();
+        renderReplyDetail();
+        if (successMessage) replyChatStatusMessage = successMessage;
+        return data;
+    });
 }
 
 function normalizeReplyHistoryMessages(messages) {
@@ -2166,6 +2487,21 @@ function getReplyDisplayNumber(item) {
     return normalized.number || normalized.chatId || 'Numara bulunamadı';
 }
 
+function hideStartupIntro() {
+    if (startupIntroHidden) return;
+    startupIntroHidden = true;
+    var intro = document.getElementById('app-intro');
+    if (!intro) return;
+    intro.classList.add('hidden');
+    setTimeout(function() {
+        if (intro && intro.parentNode) intro.parentNode.removeChild(intro);
+    }, 520);
+}
+
+function scheduleStartupIntroHide() {
+    setTimeout(hideStartupIntro, 1400);
+}
+
 function formatReplyDate(value) {
     if (!value) return '-';
     var d = new Date(value);
@@ -2186,7 +2522,8 @@ function buildReplyConversationsFromItems() {
     repliesData.forEach(function(item) {
         var normalized = normalizeReplyItem(item);
         var key = resolveReplyKey(normalized);
-        if (!key) return;
+        var pref = getReplyPref(key);
+        if (!key || pref.hidden) return;
         if (!grouped[key]) {
             grouped[key] = {
                 key: key,
@@ -2197,11 +2534,15 @@ function buildReplyConversationsFromItems() {
                 account: normalized.account,
                 lastMessage: normalized.message,
                 lastDate: normalized.date,
-                count: 1
+                count: 1,
+                muted: !!pref.muted,
+                hidden: !!pref.hidden
             };
             return;
         }
         grouped[key].count += 1;
+        grouped[key].muted = !!pref.muted;
+        grouped[key].hidden = !!pref.hidden;
         if (new Date(normalized.date).getTime() >= new Date(grouped[key].lastDate).getTime()) {
             grouped[key].chatId = normalized.chatId || grouped[key].chatId;
             grouped[key].number = normalized.number || grouped[key].number;
@@ -2213,24 +2554,240 @@ function buildReplyConversationsFromItems() {
         }
     });
     return Object.keys(grouped).map(function(key) {
-        return normalizeReplyConversation(grouped[key]);
+        return applyReplyPrefsToConversation(grouped[key]);
     }).sort(function(a, b) {
         return new Date(b.lastDate).getTime() - new Date(a.lastDate).getTime();
     });
 }
 
+function maybeReviveReplyConversation(item) {
+    var key = resolveReplyKey(item);
+    var pref = getReplyPref(key);
+    if (!pref.hidden) return;
+    setReplyPrefState(key, { muted: pref.muted, hidden: false, updatedAt: new Date().toISOString() });
+}
+
+function restoreReplyConversationIfNeeded(item) {
+    maybeReviveReplyConversation(item);
+}
+
+function mergeReplyConversationPayload(payload) {
+    if (!payload) return;
+    if (payload.prefs) syncReplyPrefsState(payload.prefs);
+    syncReplyPrefsOntoConversations();
+    syncReplyPrefsOntoHistory();
+}
+
+function shouldRenderReplyNotification(item) {
+    return !shouldSuppressReplyUi(item);
+}
+
+function shouldRenderReplyUnread(item) {
+    return !shouldSuppressReplyUi(item);
+}
+
+function getReplyActionTitle(item) {
+    return isReplyMuted(item) ? 'Sessizi aç' : 'Sessize al';
+}
+
+function getReplyActionIcon(item) {
+    return isReplyMuted(item) ? '&#128276;' : '&#128263;';
+}
+
+function getReplyDeleteTitle() {
+    return 'Konuşmayı gizle';
+}
+
+function getReplyItemCountLabel(conv) {
+    return Math.max(1, conv.count || getReplyCountForKey(conv.key));
+}
+
+function getReplyStatusChip(conv, unread) {
+    if (unread) return '<span class="reply-unread-chip">' + unread + '</span>';
+    var mutedLabel = getReplyDisplayMuteLabel(conv);
+    if (mutedLabel) return '<span class="reply-muted-chip">' + esc(mutedLabel) + '</span>';
+    return '<span class="reply-count-chip">' + getReplyItemCountLabel(conv) + '</span>';
+}
+
+function refreshReplyUiAfterStateChange() {
+    syncReplyConversationSelection();
+    renderReplies();
+    renderReplyDetail();
+}
+
+function getReplyUnreadCount(key) {
+    if (!key || getReplyPref(key).muted) return 0;
+    return replyUnreadMap[key] || 0;
+}
+
+function shouldShowReplyConversation(conv) {
+    return !getReplyPref(conv.key).hidden;
+}
+
+function filterVisibleReplyConversations(list) {
+    return (list || []).filter(shouldShowReplyConversation);
+}
+
+function syncReplyConversationsVisibility() {
+    replyConversations = filterVisibleReplyConversations(replyConversations);
+}
+
+function maybeClearMutedUnread(key) {
+    if (getReplyPref(key).muted) replyUnreadMap[key] = 0;
+}
+
+function clearMutedUnreadStates() {
+    Object.keys(replyUnreadMap).forEach(maybeClearMutedUnread);
+}
+
+function syncReplyStateDecorations() {
+    syncReplyPrefsOntoConversations();
+    syncReplyConversationsVisibility();
+    clearMutedUnreadStates();
+    syncReplyPrefsOntoHistory();
+}
+
+function hydrateReplyDecorations(payload) {
+    mergeReplyConversationPayload(payload);
+    syncReplyStateDecorations();
+}
+
+function isReplyConversationSelected(key) {
+    return selectedReplyKey === key;
+}
+
+function clearReplySelectionIfHidden() {
+    if (selectedReplyKey && getReplyPref(selectedReplyKey).hidden) {
+        selectedReplyKey = '';
+        selectedReplyConversation = null;
+    }
+}
+
+function applyReplyConversationSnapshot(data) {
+    if (!data) return;
+    applyReplyPrefMutation(data.key, data.pref || {}, data.conversation || null);
+    clearReplySelectionIfHidden();
+}
+
+function ensureReplyConversationState() {
+    syncReplyStateDecorations();
+    syncReplyConversationSelection();
+}
+
+function updateReplyConversationState(data) {
+    applyReplyConversationSnapshot(data);
+    ensureReplyConversationState();
+}
+
+function maybeRefreshSelectedReplyHistory(key) {
+    if (selectedReplyKey && key === selectedReplyKey && selectedReplyConversation) {
+        loadReplyHistory(selectedReplyConversation, { silent: true, force: true });
+    }
+}
+
+function syncReplyConversationSelection() {
+    syncSelectedConversation();
+    syncReplyPrefsOntoHistory();
+}
+
+function renderReplyConversationClass(conv, active) {
+    return 'reply-conversation-item' + (active ? ' active' : '') + (isReplyMuted(conv) ? ' muted' : '');
+}
+
+function getReplyConversationPreview(conv) {
+    return conv.lastMessage || '(mesaj yok)';
+}
+
+function syncReplyPrefsAfterSocket(payload) {
+    if (payload && payload.pref) setReplyPrefState(payload.key, payload.pref);
+    syncReplyStateDecorations();
+}
+
+function handleReplyConversationSocketPayload(payload) {
+    if (!payload) return;
+    syncReplyPrefsAfterSocket(payload);
+    if (payload.conversation) upsertReplyConversationWithPrefs(payload.conversation);
+    else if (payload.key && payload.pref && payload.pref.hidden) removeReplyConversationLocally(payload.key);
+    ensureReplyConversationState();
+}
+
+function runReplyMutation(url, body, successMessage) {
+    return mutateReplyConversation(url, body, successMessage).then(function(data) {
+        updateReplyConversationState(data);
+        maybeRefreshSelectedReplyHistory(data && data.key);
+        return data;
+    });
+}
+
+function toggleReplyMute(key, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    var conversation = replyConversations.find(function(item) { return item.key === key; });
+    if (!conversation) return;
+    var nextMuted = !isReplyMuted(conversation);
+    runReplyMutation('/api/replies/mute', {
+        key: conversation.key,
+        chatId: conversation.chatId,
+        number: conversation.number,
+        accountId: conversation.accountId,
+        account: conversation.account,
+        name: conversation.name,
+        muted: nextMuted
+    }, nextMuted ? 'Konuşma sessize alındı' : 'Konuşma sessizden çıkarıldı').catch(function(err) {
+        alert(err.message || 'Sessize alma güncellenemedi');
+    });
+}
+
+function deleteReplyConversation(key, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    var conversation = replyConversations.find(function(item) { return item.key === key; });
+    if (!conversation) return;
+    if (!confirm('Bu konuşma Dönüşler listesinden gizlensin mi?')) return;
+    runReplyMutation('/api/replies/delete', replyActionPayload(conversation), 'Konuşma listeden kaldırıldı').catch(function(err) {
+        alert(err.message || 'Konuşma silinemedi');
+    });
+}
+
+function maybePlayReplyEffects(item) {
+    if (shouldSuppressReplyUi(item)) return false;
+    playReplySound();
+    showReplyNotification(item);
+    return true;
+}
+
+function maybeIncrementReplyUnread(item) {
+    if (shouldSuppressReplyUi(item)) return false;
+    incrementReplyUnread(resolveReplyKey(item));
+    return true;
+}
+
+function renderReplyConversationActions(conv) {
+    return '<div class="reply-conversation-actions">'
+        + '<button class="reply-action-btn' + (isReplyMuted(conv) ? ' active' : '') + '" title="' + escAttr(getReplyActionTitle(conv)) + '" onclick="toggleReplyMute(\'' + escJsSingle(conv.key) + '\', event)">' + getReplyActionIcon(conv) + '</button>'
+        + '<button class="reply-action-btn delete" title="' + escAttr(getReplyDeleteTitle()) + '" onclick="deleteReplyConversation(\'' + escJsSingle(conv.key) + '\', event)">&#128465;</button>'
+        + '</div>';
+}
+
 function setReplyData(payload) {
     var items = Array.isArray(payload) ? payload : (payload && payload.items) || [];
     var conversations = payload && payload.conversations;
+    syncReplyPrefsState(payload && payload.prefs || {});
     repliesData = items.map(normalizeReplyItem).sort(function(a, b) {
         return new Date(a.date).getTime() - new Date(b.date).getTime();
     });
     replyConversations = Array.isArray(conversations) && conversations.length
-        ? conversations.map(normalizeReplyConversation).sort(function(a, b) {
+        ? conversations.map(applyReplyPrefsToConversation).filter(function(item) { return !item.hidden; }).sort(function(a, b) {
             return new Date(b.lastDate).getTime() - new Date(a.lastDate).getTime();
         })
         : buildReplyConversationsFromItems();
     syncSelectedConversation();
+    syncReplyPrefsOntoHistory();
+    clearMutedUnreadStates();
 }
 
 function syncSelectedConversation() {
@@ -2252,6 +2809,7 @@ function syncSelectedConversation() {
 }
 
 function upsertReplyItem(item) {
+    restoreReplyConversationIfNeeded(item);
     var normalized = normalizeReplyItem(item);
     var matchIndex = repliesData.findIndex(function(existing) {
         return String(existing.id) === String(normalized.id)
@@ -2260,7 +2818,7 @@ function upsertReplyItem(item) {
     if (matchIndex >= 0) repliesData[matchIndex] = normalized;
     else repliesData.push(normalized);
     repliesData.sort(function(a, b) { return new Date(a.date).getTime() - new Date(b.date).getTime(); });
-    upsertReplyConversation({
+    upsertReplyConversationWithPrefs({
         key: resolveReplyKey(normalized),
         chatId: normalized.chatId,
         number: normalized.number,
@@ -2273,7 +2831,11 @@ function upsertReplyItem(item) {
 }
 
 function upsertReplyConversation(item) {
-    var normalized = normalizeReplyConversation(item);
+    var normalized = applyReplyPrefsToConversation(item);
+    if (normalized.hidden) {
+        removeReplyConversationLocally(normalized.key);
+        return;
+    }
     var index = replyConversations.findIndex(function(existing) { return existing.key === normalized.key; });
     var currentCount = index >= 0 ? replyConversations[index].count : 0;
     normalized.count = Math.max(normalized.count, currentCount || 0, getReplyCountForKey(normalized.key));
@@ -2283,6 +2845,7 @@ function upsertReplyConversation(item) {
         return new Date(b.lastDate).getTime() - new Date(a.lastDate).getTime();
     });
     syncSelectedConversation();
+    syncReplyPrefsOntoHistory();
 }
 
 function getReplyCountForKey(key) {
@@ -2290,7 +2853,7 @@ function getReplyCountForKey(key) {
 }
 
 function incrementReplyUnread(key) {
-    if (!key) return;
+    if (!key || getReplyPref(key).muted) return;
     if (activeTab === 'replies' && selectedReplyKey === key) {
         replyUnreadMap[key] = 0;
         replySeenConversationKeys[key] = true;
@@ -2320,6 +2883,7 @@ function markRepliesViewed() {
 
 function getTotalUnreadReplies() {
     return Object.keys(replyUnreadMap).reduce(function(sum, key) {
+        if (getReplyPref(key).muted) return sum;
         return sum + (replyUnreadMap[key] || 0);
     }, 0);
 }
@@ -2329,12 +2893,16 @@ function loadReplies() {
         setReplyData(data);
         renderReplies();
         if (selectedReplyConversation) loadReplyHistory(selectedReplyConversation, { silent: true });
+    }).then(function() {
+        scheduleStartupIntroHide();
     }).catch(function(err) {
         document.getElementById('replies-list').innerHTML = '<div class="empty" style="padding:12px"><div class="empty-icon">📩</div>' + esc(err.message || 'Dönüşler yüklenemedi') + '</div>';
+        scheduleStartupIntroHide();
     });
 }
 
 function selectReplyConversation(key) {
+    if (getReplyPref(key).hidden) return;
     selectedReplyKey = key;
     syncSelectedConversation();
     markConversationSeen(key);
@@ -2359,9 +2927,9 @@ function renderReplies() {
         return;
     }
     el.innerHTML = replyConversations.map(function(conv) {
-        var unread = replyUnreadMap[conv.key] || 0;
+        var unread = getReplyUnreadCount(conv.key);
         var active = conv.key === selectedReplyKey;
-        return '<button class="reply-conversation-item' + (active ? ' active' : '') + '" onclick="selectReplyConversation(\'' + escJsSingle(conv.key) + '\')">'
+        return '<button class="' + renderReplyConversationClass(conv, active) + '" onclick="selectReplyConversation(\'' + escJsSingle(conv.key) + '\')">'
             + '<div class="reply-avatar">' + esc(getReplyAvatarLabel(conv)) + '</div>'
             + '<div class="reply-conversation-main">'
             + '<div class="reply-conversation-top">'
@@ -2370,10 +2938,11 @@ function renderReplies() {
             + '</div>'
             + '<div class="reply-conversation-number">' + esc(getReplyDisplayNumber(conv)) + '</div>'
             + '<div class="reply-conversation-bottom">'
-            + '<div class="reply-conversation-preview">' + esc(conv.lastMessage || '(mesaj yok)') + '</div>'
-            + (unread ? '<span class="reply-unread-chip">' + unread + '</span>' : '<span class="reply-count-chip">' + Math.max(1, conv.count || getReplyCountForKey(conv.key)) + '</span>')
+            + '<div class="reply-conversation-preview">' + esc(getReplyConversationPreview(conv)) + '</div>'
+            + getReplyStatusChip(conv, unread)
             + '</div>'
             + '</div>'
+            + renderReplyConversationActions(conv)
             + '</button>';
     }).join('');
     renderReplyDetail();
@@ -2402,12 +2971,12 @@ function renderReplyDetail() {
         return;
     }
 
-    titleEl.textContent = getReplyDisplayName(selectedReplyConversation);
+    titleEl.textContent = getReplyDisplayName(selectedReplyConversation) + (isReplyMuted(selectedReplyConversation) ? ' • Sessizde' : '');
     subtitleEl.textContent = getReplyDisplayNumber(selectedReplyConversation) + ' • ' + formatReplyDate(selectedReplyConversation.lastDate);
-    accountEl.textContent = selectedReplyConversation.account || 'Hesap yok';
+    accountEl.textContent = (selectedReplyConversation.account || 'Hesap yok') + ' • ' + getReplyDisplayNumber(selectedReplyConversation);
     inputEl.disabled = false;
     sendBtn.disabled = replySendInProgress;
-    hintEl.textContent = replySendInProgress ? 'Mesaj gönderiliyor...' : 'Son 5 karşılıklı mesaj gösterilir.';
+    hintEl.textContent = replySendInProgress ? 'Mesaj gönderiliyor...' : (isReplyMuted(selectedReplyConversation) ? 'Bu konuşma sessizde. Yeni reply bildirimleri bastırılır.' : 'Son 5 karşılıklı mesaj gösterilir.');
     statusEl.textContent = replyChatStatusMessage || (replyHistoryLoading ? 'Mesaj geçmişi yükleniyor...' : '');
 
     var history = replyHistoryCache[selectedReplyKey] || [];
@@ -2433,84 +3002,6 @@ function renderReplyDetail() {
     messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-function loadReplyHistory(conversation, opts) {
-    opts = opts || {};
-    var key = resolveReplyKey(conversation);
-    if (!key) return Promise.resolve();
-    if (!opts.force && replyHistoryCache[key] && replyHistoryCache[key].length) {
-        replyChatStatusMessage = '';
-        if (!opts.silent) renderReplyDetail();
-        return Promise.resolve(replyHistoryCache[key]);
-    }
-    replyHistoryLoading = true;
-    replyChatStatusMessage = '';
-    if (!opts.silent) renderReplyDetail();
-    var params = new URLSearchParams();
-    if (conversation.chatId) params.set('chatId', conversation.chatId);
-    if (conversation.accountId) params.set('accountId', conversation.accountId);
-    params.set('limit', '5');
-    return fetch('/api/replies/history?' + params.toString()).then(safeJson).then(function(data) {
-        replyHistoryCache[key] = normalizeReplyHistoryMessages(data.messages || []);
-        replyHistoryLoading = false;
-        replyChatStatusMessage = replyHistoryCache[key].length ? '' : 'Geçmiş bulunamadı';
-        if (selectedReplyKey === key) {
-            renderReplyDetail();
-            if (activeTab === 'replies') markConversationSeen(key);
-        }
-        return replyHistoryCache[key];
-    }).catch(function(err) {
-        replyHistoryLoading = false;
-        replyChatStatusMessage = err.message || 'Mesaj geçmişi alınamadı';
-        if (selectedReplyKey === key) {
-            renderReplyDetail();
-        }
-    });
-}
-
-function sendReplyMessage() {
-    if (!selectedReplyConversation || replySendInProgress) return;
-    var inputEl = document.getElementById('reply-compose-input');
-    var text = inputEl.value.trim();
-    if (!text) {
-        inputEl.focus();
-        return;
-    }
-    replySendInProgress = true;
-    replyChatStatusMessage = '';
-    renderReplyDetail();
-    fetch('/api/replies/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            chatId: selectedReplyConversation.chatId,
-            accountId: selectedReplyConversation.accountId,
-            account: selectedReplyConversation.account,
-            number: selectedReplyConversation.number,
-            name: selectedReplyConversation.name,
-            message: text
-        })
-    }).then(safeJson).then(function(data) {
-        if (data.error) throw new Error(data.error);
-        inputEl.value = '';
-        replyChatStatusMessage = 'Mesaj gönderildi';
-        if (data.item) {
-            upsertReplyItem(data.item);
-            var key = resolveReplyKey(data.item);
-            if (!replyHistoryCache[key]) replyHistoryCache[key] = [];
-            replyHistoryCache[key].push(normalizeReplyItem(data.item));
-            replyHistoryCache[key] = replyHistoryCache[key].slice(-5);
-        }
-        replySendInProgress = false;
-        renderReplies();
-        renderReplyDetail();
-        loadReplyHistory(selectedReplyConversation, { silent: true, force: true });
-    }).catch(function(err) {
-        replySendInProgress = false;
-        replyChatStatusMessage = err.message || 'Mesaj gönderilemedi';
-        renderReplyDetail();
-    });
-}
-
 function updateReplyBadge() {
     var badge = document.getElementById('reply-badge');
     var totalUnread = getTotalUnreadReplies();
@@ -2523,6 +3014,7 @@ function updateReplyBadge() {
 }
 
 function showReplyNotification(item) {
+    if (shouldSuppressReplyUi(item)) return;
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
     var normalized = normalizeReplyItem(item);
     var sender = getReplyDisplayName(normalized);
@@ -2883,7 +3375,7 @@ primeReplyAudio();
     window.addEventListener(evt, unlockReplyAudio, { once: true });
 });
 
-// Proxy inputlar\u0131 de\u011fi\u015fince test\u0131 s\u0131f\u0131rla
+// Proxy inputları değişince testi sıfırla
 ['proxy-type','proxy-host','proxy-port','proxy-user','proxy-pass'].forEach(function(id) {
     var el = document.getElementById(id);
     if (el) el.addEventListener('input', function() {
@@ -2893,7 +3385,7 @@ primeReplyAudio();
     });
 });
 
-log('Sistem haz\u0131r. Hesap ekleyip mesaj kaydedin.', 'info');
+log('Sistem hazır. Hesap ekleyip mesaj kaydedin.', 'info');
 </script>
 </body>
 </html>
