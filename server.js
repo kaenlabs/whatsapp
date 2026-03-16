@@ -62,7 +62,13 @@ console.log('📁 Veri dizini:', DATA_DIR);
 // ─── Uzak Log Sistemi (kaenlabs.net/log.php) ────────────────────────────────
 // Hata teşhisi için detaylı logları sunucuya gönderir.
 const REMOTE_LOG_URL = 'https://kaenlabs.net/log.php';
-const APP_VERSION = '2.3.4';
+const APP_VERSION = (() => {
+    try {
+        return require('./package.json').version || '2.3.6';
+    } catch (_) {
+        return '2.3.6';
+    }
+})();
 
 function remoteLog(level, category, message, extra) {
     try {
@@ -153,6 +159,7 @@ let sentLog = [];
 let savedNotes = [];
 let replies = [];
 let sentNumbers = new Set();
+let successfulChats = new Set();
 let processedReplyMessageIds = new Set();
 let proxyConfig = { enabled: false, type: 'http', host: '', port: '', username: '', password: '' };
 
@@ -219,12 +226,174 @@ function saveReplies() {
 }
 
 function rebuildSentNumbers() {
-    sentNumbers = new Set(sentLog.filter(s => s.status === 'ba\u015Far\u0131l\u0131').map(s => s.number.replace(/\D/g, '')));
+    sentNumbers = new Set();
+    successfulChats = new Set();
+    sentLog.filter(s => s.status === 'başarılı').forEach(s => {
+        const normalized = normalizeNumber(s.number);
+        if (normalized) sentNumbers.add(normalized);
+        const chatId = normalizeChatId(s.chatId || s.from || s.to);
+        if (chatId) successfulChats.add(chatId);
+        if (!chatId && normalized) {
+            successfulChats.add(normalized + '@c.us');
+            successfulChats.add(normalized + '@s.whatsapp.net');
+        }
+    });
 }
 
 function normalizeNumber(value) {
     return String(value || '').trim().replace(/\D/g, '');
 }
+
+function normalizeChatId(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    if (/@s\.whatsapp\.net$/i.test(raw)) return raw.replace(/@s\.whatsapp\.net$/i, '@c.us').toLowerCase();
+    if (/@c\.us$/i.test(raw) || /@g\.us$/i.test(raw)) return raw.toLowerCase();
+    const digits = normalizeNumber(raw);
+    return digits ? (digits + '@c.us') : raw.toLowerCase();
+}
+
+function isTrackedReplyMessage(msg) {
+    const fromChatId = normalizeChatId(msg?.from);
+    const authorChatId = normalizeChatId(msg?.author);
+    const participantChatId = normalizeChatId(msg?._data?.author || msg?._data?.participant || msg?._data?.from);
+    const candidates = [fromChatId, authorChatId, participantChatId].filter(Boolean);
+    if (candidates.some(chatId => successfulChats.has(chatId))) return true;
+    const numberCandidates = candidates.map(normalizeNumber).filter(Boolean);
+    return numberCandidates.some(number => sentNumbers.has(number));
+}
+
+function buildReplyRecord(msg, accountId, name) {
+    const fromChatId = normalizeChatId(msg?.from);
+    const authorChatId = normalizeChatId(msg?.author);
+    const participantChatId = normalizeChatId(msg?._data?.author || msg?._data?.participant || msg?._data?.from);
+    const primaryChatId = fromChatId || authorChatId || participantChatId;
+    const number = normalizeNumber(primaryChatId || msg?.from || msg?.author);
+    return {
+        id: Date.now(),
+        number: number || (primaryChatId || '-'),
+        name: name,
+        message: msg?.body || msg?._data?.caption || '(medya)',
+        account: accounts[accountId]?.name || accountId,
+        date: new Date().toISOString(),
+        chatId: primaryChatId || ''
+    };
+}
+
+function persistReply(reply) {
+    replies.push(reply);
+    saveReplies();
+    io.emit('reply-received', reply);
+}
+
+function logReplyEvent(level, message, extra) {
+    remoteLog(level, 'reply', message, extra);
+}
+
+function attachReplyListeners(client, accountId) {
+    const handleReplyMessage = async (eventName, msg) => {
+        try {
+            const serializedId = msg?.id?._serialized || msg?.id?.id || `${eventName}-${msg?.from || 'unknown'}-${msg?.timestamp || Date.now()}-${msg?.body || ''}`;
+            if (!serializedId) return;
+            if (processedReplyMessageIds.has(serializedId)) return;
+            if (msg?.fromMe) return;
+
+            const fromChatId = normalizeChatId(msg?.from);
+            const authorChatId = normalizeChatId(msg?.author);
+            const tracked = isTrackedReplyMessage(msg);
+            logReplyEvent('info', `reply-event:${eventName}`, {
+                accountId,
+                messageId: serializedId,
+                from: msg?.from || '',
+                author: msg?.author || '',
+                fromChatId,
+                authorChatId,
+                bodyPreview: String(msg?.body || msg?._data?.caption || '').slice(0, 120),
+                hasMedia: !!msg?.hasMedia,
+                type: msg?.type || msg?._data?.type || '',
+                isGroup: /@g\.us$/i.test(String(msg?.from || '')),
+                tracked,
+                sentNumbersSize: sentNumbers.size,
+                successfulChatsSize: successfulChats.size
+            });
+            if (!tracked) return;
+
+            processedReplyMessageIds.add(serializedId);
+            const contact = await msg.getContact().catch(() => null);
+            const name = contact?.pushname || contact?.name || normalizeNumber(authorChatId || fromChatId) || fromChatId || 'Bilinmeyen';
+            const reply = buildReplyRecord(msg, accountId, name);
+            persistReply(reply);
+            logReplyEvent('info', 'reply-stored', {
+                accountId,
+                messageId: serializedId,
+                number: reply.number,
+                chatId: reply.chatId,
+                name,
+                bodyPreview: String(reply.message || '').slice(0, 120)
+            });
+            console.log(`📩 Dönüş: ${reply.number} (${name})`);
+        } catch (e) {
+            logReplyEvent('error', `reply-handler:${eventName}:${e.message}`, {
+                accountId,
+                stack: (e.stack || '').slice(0, 800)
+            });
+        }
+    };
+
+    client.on('message', (msg) => handleReplyMessage('message', msg));
+    client.on('message_create', (msg) => handleReplyMessage('message_create', msg));
+}
+
+function trackSuccessfulChat(chatId, number) {
+    const normalizedChatId = normalizeChatId(chatId);
+    const normalizedNumber = normalizeNumber(number || chatId);
+    if (normalizedChatId) successfulChats.add(normalizedChatId);
+    if (normalizedNumber) {
+        sentNumbers.add(normalizedNumber);
+        successfulChats.add(normalizedNumber + '@c.us');
+        successfulChats.add(normalizedNumber + '@s.whatsapp.net');
+    }
+}
+
+function appendSuccessfulSend(number, accountName, chatId) {
+    appendSentLog({
+        number,
+        account: accountName,
+        chatId: normalizeChatId(chatId),
+        status: 'başarılı',
+        date: new Date().toISOString()
+    });
+    trackSuccessfulChat(chatId, number);
+}
+
+function appendFailedSend(number, accountName, chatId, error) {
+    appendSentLog({
+        number,
+        account: accountName,
+        chatId: normalizeChatId(chatId),
+        status: 'hata',
+        error,
+        date: new Date().toISOString()
+    });
+}
+
+function logSendEvent(level, message, extra) {
+    remoteLog(level, 'send', message, extra);
+}
+
+function logClientLifecycle(level, message, extra) {
+    remoteLog(level, 'client', message, extra);
+}
+
+function logRendererEvent(level, message, extra) {
+    remoteLog(level, 'renderer', message, extra);
+}
+
+app.post('/api/log', (req, res) => {
+    const { level, message, extra } = req.body || {};
+    logRendererEvent(level || 'info', message || 'renderer-log', extra || {});
+    res.json({ success: true });
+});
 
 function appendSentLog(entry) {
     sentLog.push(entry);
@@ -741,39 +910,24 @@ app.post('/api/accounts', (req, res) => {
             accounts[accountId].name = client.info?.pushname || accountId;
             io.emit('account-update', getAccountInfo(accountId));
             io.emit('qr-done', { id: accountId });
+            logClientLifecycle('info', 'client-ready', {
+                accountId,
+                pushname: client.info?.pushname || '',
+                wid: client.info?.wid?._serialized || ''
+            });
             console.log(`✅ Hesap bağlandı: ${accountId}`);
         }
     });
 
-    // Gelen mesaj dinleyici (dönüş takibi)
-    client.on('message', async (msg) => {
-        try {
-            if (msg.fromMe) return;
-            const from = msg.from.replace('@c.us', '').replace('@s.whatsapp.net', '').replace(/\D/g, '');
-            if (!from || !sentNumbers.has(from)) return;
+    attachReplyListeners(client, accountId);
+    logClientLifecycle('info', 'reply-listeners-attached', { accountId });
 
-            const messageId = msg.id?._serialized || msg.id?.id || `${msg.from}-${msg.timestamp || Date.now()}-${msg.body || ''}`;
-            if (processedReplyMessageIds.has(messageId)) return;
-            processedReplyMessageIds.add(messageId);
-
-            const contact = await msg.getContact();
-            const name = contact?.pushname || contact?.name || from;
-            const reply = {
-                id: Date.now(),
-                number: from,
-                name: name,
-                message: msg.body || '(medya)',
-                account: accounts[accountId]?.name || accountId,
-                date: new Date().toISOString()
-            };
-            replies.push(reply);
-            saveReplies();
-            io.emit('reply-received', reply);
-            console.log(`📩 Dönüş: ${from} (${name})`);
-        } catch(e) { /* sessizce geç */ }
+    client.on('change_state', (state) => {
+        logClientLifecycle('info', 'client-change-state', { accountId, state });
     });
 
-    client.on('auth_failure', () => {
+    client.on('auth_failure', (message) => {
+        logClientLifecycle('error', 'client-auth-failure', { accountId, message: message || '' });
         if (accounts[accountId]) {
             accounts[accountId].status = 'auth-hatası';
             io.emit('account-update', getAccountInfo(accountId));
@@ -781,6 +935,7 @@ app.post('/api/accounts', (req, res) => {
     });
 
     client.on('disconnected', (reason) => {
+        logClientLifecycle('warn', 'client-disconnected', { accountId, reason: reason || '' });
         if (accounts[accountId]) {
             const isSpam = reason === 'LOGOUT';
             accounts[accountId].status = isSpam ? 'spam-engeli' : 'bağlantı-kesildi';
@@ -798,7 +953,88 @@ app.post('/api/accounts', (req, res) => {
         }
     });
 
+    client.on('error', (err) => {
+        logClientLifecycle('error', 'client-error', {
+            accountId,
+            message: err?.message || String(err),
+            stack: (err?.stack || '').slice(0, 800)
+        });
+    });
+
+    client.on('loading_screen', (percent, message) => {
+        logClientLifecycle('info', 'client-loading-screen', { accountId, percent, message: message || '' });
+    });
+
+    client.on('qr', () => {
+        logClientLifecycle('info', 'client-qr', { accountId });
+    });
+
+    client.on('authenticated', () => {
+        logClientLifecycle('info', 'client-authenticated', { accountId });
+        if (accounts[accountId]) {
+            accounts[accountId].status = 'doğrulandı';
+            io.emit('account-update', getAccountInfo(accountId));
+        }
+    });
+
+    client.on('message_ack', (msg, ack) => {
+        logClientLifecycle('info', 'client-message-ack', {
+            accountId,
+            ack,
+            id: msg?.id?._serialized || msg?.id?.id || '',
+            to: msg?.to || '',
+            from: msg?.from || ''
+        });
+    });
+
+    client.on('message_revoke_everyone', (after, before) => {
+        logClientLifecycle('warn', 'client-message-revoked', {
+            accountId,
+            afterId: after?.id?._serialized || '',
+            beforeId: before?.id?._serialized || ''
+        });
+    });
+
+    client.on('group_join', (notification) => {
+        logClientLifecycle('info', 'client-group-join', {
+            accountId,
+            chatId: notification?.chatId || '',
+            author: notification?.author || ''
+        });
+    });
+
+    client.on('group_leave', (notification) => {
+        logClientLifecycle('info', 'client-group-leave', {
+            accountId,
+            chatId: notification?.chatId || '',
+            author: notification?.author || ''
+        });
+    });
+
+    client.on('contact_changed', (message, oldId, newId, isContact) => {
+        logClientLifecycle('info', 'client-contact-changed', {
+            accountId,
+            oldId: oldId || '',
+            newId: newId || '',
+            isContact: !!isContact,
+            messageId: message?.id?._serialized || ''
+        });
+    });
+
+    client.on('incoming_call', (call) => {
+        logClientLifecycle('info', 'client-incoming-call', {
+            accountId,
+            from: call?.from || '',
+            canHandleLocally: !!call
+        });
+    });
+
     client.initialize().catch(err => {
+        logClientLifecycle('error', 'client-initialize-failed', {
+            accountId,
+            message: err?.message || String(err),
+            stack: (err?.stack || '').slice(0, 800)
+        });
         console.error(`Başlatma hatası (${accountId}):`, err.message);
         if (accounts[accountId]) {
             accounts[accountId].status = 'hata';
@@ -1474,16 +1710,20 @@ async function sendMessages(numbers, messageList, messageMode, accountIds, opts)
 
             // 5) Mesajı gönder
             await client.sendMessage(realChatId, msgText);
+            logSendEvent('info', 'send-success', {
+                accountId,
+                number,
+                chatId: normalizeChatId(realChatId),
+                messagePreview: String(msgText || '').slice(0, 120),
+                index: i + 1,
+                total: numbers.length
+            });
             successCount++;
             sentThisBurst++;
             totalSent++;
 
             // Gönderim kaydını logla
-            appendSentLog({
-                number, account: accounts[accountId]?.name || accountId,
-                status: 'başarılı', date: new Date().toISOString()
-            });
-            sentNumbers.add(normalizeNumber(number));
+            appendSuccessfulSend(number, accounts[accountId]?.name || accountId, realChatId);
 
             emitProgress({
                 number, accountId,
@@ -1494,11 +1734,17 @@ async function sendMessages(numbers, messageList, messageMode, accountIds, opts)
         } catch (err) {
             errorCount++;
             totalSent++;
-
-            appendSentLog({
-                number, account: accounts[accountId]?.name || accountId,
-                status: 'hata', error: err.message, date: new Date().toISOString()
+            logSendEvent('error', 'send-failed', {
+                accountId,
+                number,
+                chatId: normalizeChatId(chatId),
+                error: err.message,
+                stack: (err.stack || '').slice(0, 800),
+                index: i + 1,
+                total: numbers.length
             });
+
+            appendFailedSend(number, accounts[accountId]?.name || accountId, chatId, err.message);
 
             emitProgress({
                 number, accountId,
