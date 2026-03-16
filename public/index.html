@@ -216,8 +216,14 @@
                 <div class="fg"><label>Burst Molas&#305; (dk)</label><input type="number" id="b-pause" value="5" min="1"></div>
             </div>
             <div class="divider"></div>
-            <div class="fg"><label>Anti-Spam Korumalar&#305;</label>
-                <div style="display:flex;flex-direction:column;gap:6px;background:var(--inp);padding:8px 10px;border-radius:8px;border:1px solid var(--inp-border);">
+            <div class="fg"><label style="display:flex;align-items:center;justify-content:space-between;gap:10px;">Anti-Spam Korumalar&#305;
+                <span style="display:inline-flex;align-items:center;gap:8px;font-size:11px;color:var(--text);text-transform:none;letter-spacing:normal;">
+                    <input type="checkbox" id="chk-speedy" class="custom-check" onchange="toggleSpeedyMode()">
+                    <span style="font-weight:700;color:#fbbf24;">&#9889; Speedy Mode</span>
+                </span>
+            </label>
+                <div id="anti-spam-box" style="display:flex;flex-direction:column;gap:6px;background:var(--inp);padding:8px 10px;border-radius:8px;border:1px solid var(--inp-border);transition:opacity 0.2s ease, filter 0.2s ease;">
+                    <div id="speedy-hint" style="display:none;font-size:11px;color:#fbbf24;font-weight:600;padding:0 0 4px 0;">Speedy Mode açık: korumalar kilitlendi, hızlı profil uygulanıyor.</div>
                     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;text-transform:none;letter-spacing:normal;">
                         <input type="checkbox" id="chk-warmup" class="custom-check" checked>
                         <span style="font-size:12px;color:var(--text);font-weight:600;">&#x1F525; Ak&#305;ll&#305; Warm-up (&#304;lk 5 mesaj yava&#351;)</span>
@@ -257,6 +263,7 @@
                 <div class="stat"><span class="stat-l">&#304;lerleme:</span><span class="stat-n" id="s-prog">0 / 0</span></div>
                 <div class="stat"><span class="stat-l">Ba&#351;ar&#305;l&#305;:</span><span class="stat-n" id="s-ok" style="color:var(--ok)">0</span></div>
                 <div class="stat"><span class="stat-l">Hatal&#305;:</span><span class="stat-n" id="s-err" style="color:var(--err)">0</span></div>
+                <div class="stat"><span class="stat-l">Atlanan:</span><span class="stat-n" id="s-skip" style="color:var(--warn)">0</span></div>
                 <div class="prog-wrap">
                     <div class="prog-track"><div class="prog-fill" id="prog-fill"></div></div>
                 </div>
@@ -272,8 +279,16 @@
                 <div class="stat"><span class="stat-l">Toplam:</span><span class="stat-n" id="sent-total">0</span></div>
                 <div class="stat"><span class="stat-l">Ba&#351;ar&#305;l&#305;:</span><span class="stat-n" id="sent-ok" style="color:var(--ok)">0</span></div>
                 <div class="stat"><span class="stat-l">Hatal&#305;:</span><span class="stat-n" id="sent-err" style="color:var(--err)">0</span></div>
-                <div style="flex:1"></div>
-                <span style="font-size:10px;color:var(--dim)">&#x1F512; Bu kay&#305;tlar silinemez</span>
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+                    <select id="sent-filter" onchange="renderSentLog()" style="background:var(--inp);color:var(--text);border:1px solid var(--inp-border);border-radius:8px;padding:6px 10px;font-size:11px;min-width:120px;">
+                        <option value="all">Tümü</option>
+                        <option value="today">Bugün</option>
+                        <option value="yesterday">Dün</option>
+                        <option value="last7">Son 7 Gün</option>
+                        <option value="last30">Son 30 Gün</option>
+                    </select>
+                    <span style="font-size:10px;color:var(--dim)">&#x1F512; Bu kay&#305;tlar silinemez</span>
+                </div>
             </div>
             <div class="panel-body" style="padding:8px 12px;">
                 <div id="sent-list" style="font-family:'Consolas',monospace;font-size:12px;"></div>
@@ -396,6 +411,9 @@ var sentLogData = [];
 var proxyVerified = false;
 var notesData = [];
 var isSending = false;
+var speedyStateBackup = null;
+var replyAudio = null;
+var replyAudioUnlocked = false;
 
 // ── Tabs ────────────────────────────────────────────────
 function switchTab(name) {
@@ -432,7 +450,7 @@ socket.on('spam-detected', function(d) {
 
 socket.on('send-started', function(d) {
     isSending = true; setSendBtns();
-    setStat(0, d.total, 0, 0);
+    setStat(0, d.total, 0, 0, d.skippedCount || 0);
     log('G\u00F6nderim ba\u015Flad\u0131 \u2014 ' + d.total + ' numara', 'info');
 });
 socket.on('send-progress', function(data) {
@@ -443,7 +461,7 @@ socket.on('send-progress', function(data) {
     } else {
         log((ok ? '\u2713' : '\u2717') + ' ' + data.number + '  via ' + data.accountName + (!ok ? '  ' + (data.error || '') : ''), ok ? 'ok' : 'err');
     }
-    setStat(data.index, data.total, data.successCount, data.errorCount);
+    setStat(data.index, data.total, data.successCount, data.errorCount, data.skippedCount);
 });
 socket.on('send-log', function(d) {
     log(d.text, d.type || 'info');
@@ -452,15 +470,22 @@ socket.on('send-pause', function(d) {
     setStat(d.index, d.total);
     log('\u23F8 ' + d.seconds + 'sn mola...', 'pause');
 });
+socket.on('send-paused', function(d) {
+    log('\u23F8 Bağlı hesap kalmadı — yeni hesap bekleniyor (' + d.index + '/' + d.total + ')', 'pause');
+});
+socket.on('send-resumed', function(d) {
+    log('\u25B6 Gönderim devam ediyor — ' + d.accountCount + ' bağlı hesap bulundu', 'info');
+});
 socket.on('send-complete', function(d) {
     isSending = false; setSendBtns();
-    setStat(d.total, d.total, d.successCount, d.errorCount);
+    setStat(d.total, d.total, d.successCount, d.errorCount, d.skippedCount);
     var msg = 'Tamamland\u0131 \u2014 Ba\u015Far\u0131l\u0131: ' + d.successCount + '  Hatal\u0131: ' + d.errorCount;
     if (d.skippedCount) msg += '  Atlanan: ' + d.skippedCount;
     log(msg, 'info');
 });
 socket.on('send-stopped', function(d) {
     isSending = false; setSendBtns();
+    setStat(d.index, d.total, d.successCount, d.errorCount, d.skippedCount);
     log('Durduruldu \u2014 ' + d.index + '/' + d.total, 'warn');
 });
 socket.on('sent-log-update', function(data) {
@@ -470,11 +495,48 @@ socket.on('sent-log-update', function(data) {
 socket.on('reply-received', function(r) {
     repliesData.push(r);
     renderReplies();
+    playReplySound();
     log('\u{1F4E9} D\u00F6n\u00FC\u015F: ' + r.number + (r.name ? ' (' + r.name + ')' : '') + ' \u2014 ' + r.message.substring(0, 60), 'info');
     if ('Notification' in window && Notification.permission === 'granted') {
         new Notification('D\u00F6n\u00FC\u015F Var!', { body: (r.name || r.number) + ' mesaj g\u00F6nderdi:\n' + r.message.substring(0, 100), icon: 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>\u{1F4E9}</text></svg>' });
     }
 });
+
+function ensureReplyAudio() {
+    if (!replyAudio) {
+        replyAudio = new Audio('reply-notification.wav');
+        replyAudio.preload = 'auto';
+        replyAudio.volume = 0.7;
+    }
+    return replyAudio;
+}
+
+function unlockReplyAudio() {
+    if (replyAudioUnlocked) return;
+    var audio = ensureReplyAudio();
+    replyAudioUnlocked = true;
+    var playPromise = audio.play();
+    if (playPromise && typeof playPromise.then === 'function') {
+        playPromise.then(function() {
+            audio.pause();
+            audio.currentTime = 0;
+        }).catch(function() {
+            replyAudioUnlocked = false;
+        });
+    }
+}
+
+function playReplySound() {
+    var audio = ensureReplyAudio();
+    try {
+        audio.pause();
+        audio.currentTime = 0;
+        var playPromise = audio.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch(function() {});
+        }
+    } catch (_) {}
+}
 
 function loadAccounts() {
     fetch('/api/accounts').then(function(r){return r.json()}).then(function(list) {
@@ -694,7 +756,8 @@ function doStartSend() {
     var bCount = parseInt(document.getElementById('b-count').value);
     var bPause = parseInt(document.getElementById('b-pause').value) * 60000;
     var mode = getMessageMode();
-    
+    var speedyMode = document.getElementById('chk-speedy').checked;
+
     var asWarmup = document.getElementById('chk-warmup').checked;
     var asTyping = document.getElementById('chk-typing').checked;
     var asOffline = document.getElementById('chk-offline').checked;
@@ -702,29 +765,155 @@ function doStartSend() {
 
     fetch('/api/send', {
         method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ 
-            numbers: numbers, messages: selectedMsgs, messageMode: mode, 
+        body: JSON.stringify({
+            numbers: numbers, messages: selectedMsgs, messageMode: mode,
             delayMin: dMin, delayMax: dMax, burstCount: bCount, burstPause: bPause,
-            antiSpam: { warmup: asWarmup, typing: asTyping, offline: asOffline, torIp: asTorIp }
+            antiSpam: { warmup: asWarmup, typing: asTyping, offline: asOffline, torIp: asTorIp },
+            speedyMode: speedyMode
         })
     }).then(function(r){return r.json()}).then(function(data) {
         if (data.error) alert(data.error);
+        else if (data.skippedCount) log('G\u00F6nderim \u00F6ncesi ' + data.skippedCount + ' numara otomatik atland\u0131', 'skip');
     });
 }
 
 function stopSend() { fetch('/api/stop', { method: 'POST' }); }
+
+function toggleSpeedyMode() {
+    var enabled = document.getElementById('chk-speedy').checked;
+    var antiSpamBox = document.getElementById('anti-spam-box');
+    var hint = document.getElementById('speedy-hint');
+    var antiSpamIds = ['chk-warmup', 'chk-typing', 'chk-offline', 'chk-torip'];
+    var inputIds = ['d-min', 'd-max', 'b-count', 'b-pause'];
+
+    if (enabled && !speedyStateBackup) {
+        speedyStateBackup = {
+            antiSpam: antiSpamIds.map(function(id) { return { id: id, checked: document.getElementById(id).checked }; }),
+            values: inputIds.map(function(id) { return { id: id, value: document.getElementById(id).value }; })
+        };
+    }
+
+    antiSpamIds.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (enabled) el.checked = false;
+        else if (speedyStateBackup) {
+            var saved = speedyStateBackup.antiSpam.find(function(item) { return item.id === id; });
+            if (saved) el.checked = saved.checked;
+        }
+        el.disabled = enabled;
+    });
+
+    inputIds.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (enabled) {
+            if (id === 'd-min') el.value = 1;
+            if (id === 'd-max') el.value = 2;
+            if (id === 'b-count') el.value = 25;
+            if (id === 'b-pause') el.value = 1;
+        } else if (speedyStateBackup) {
+            var savedValue = speedyStateBackup.values.find(function(item) { return item.id === id; });
+            if (savedValue) el.value = savedValue.value;
+        }
+        el.disabled = enabled;
+    });
+
+    antiSpamBox.style.opacity = enabled ? '0.6' : '1';
+    antiSpamBox.style.filter = enabled ? 'grayscale(0.15)' : 'none';
+    hint.style.display = enabled ? 'block' : 'none';
+
+    if (!enabled) speedyStateBackup = null;
+}
 
 function setSendBtns() {
     document.getElementById('btn-send').disabled = isSending;
     document.getElementById('btn-stop').disabled = !isSending;
 }
 
-function setStat(done, total, ok, err) {
+function setSkippedStat(count) {
+    var el = document.getElementById('s-skip');
+    if (el && count !== undefined) el.textContent = count;
+}
+
+function setStat(done, total, ok, err, skipped) {
     document.getElementById('s-prog').textContent = (done != null ? done : '?') + ' / ' + (total != null ? total : '?');
     if (ok !== undefined) document.getElementById('s-ok').textContent = ok;
     if (err !== undefined) document.getElementById('s-err').textContent = err;
+    setSkippedStat(skipped || 0);
     var pct = total > 0 ? (done / total * 100) : 0;
     document.getElementById('prog-fill').style.width = pct + '%';
+}
+
+function getSentFilterValue() {
+    var el = document.getElementById('sent-filter');
+    return el ? el.value : 'all';
+}
+
+function getFilteredSentLog() {
+    var filter = getSentFilterValue();
+    var now = new Date();
+    var startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    var startTomorrow = new Date(startToday);
+    startTomorrow.setDate(startTomorrow.getDate() + 1);
+    var startYesterday = new Date(startToday);
+    startYesterday.setDate(startYesterday.getDate() - 1);
+    var startLast7 = new Date(startToday);
+    startLast7.setDate(startLast7.getDate() - 6);
+    var startLast30 = new Date(startToday);
+    startLast30.setDate(startLast30.getDate() - 29);
+
+    return sentLogData.filter(function(s) {
+        var d = new Date(s.date);
+        if (filter === 'today') return d >= startToday && d < startTomorrow;
+        if (filter === 'yesterday') return d >= startYesterday && d < startToday;
+        if (filter === 'last7') return d >= startLast7 && d < startTomorrow;
+        if (filter === 'last30') return d >= startLast30 && d < startTomorrow;
+        return true;
+    });
+}
+
+function getSentStatusClass(status) {
+    if (status === 'ba\u015Far\u0131l\u0131') return 'ok';
+    if (status === 'atland\u0131') return 'skip';
+    return 'err';
+}
+
+function getSentReasonText(item) {
+    if (item.status === 'atland\u0131') return item.reason || item.error || 'Atland\u0131';
+    return item.status;
+}
+
+function renderSentLog() {
+    var el = document.getElementById('sent-list');
+    var filtered = getFilteredSentLog();
+    var okCount = filtered.filter(function(s){return s.status === 'ba\u015Far\u0131l\u0131'}).length;
+    var errCount = filtered.filter(function(s){return s.status === 'hata'}).length;
+    document.getElementById('sent-total').textContent = filtered.length;
+    document.getElementById('sent-ok').textContent = okCount;
+    document.getElementById('sent-err').textContent = errCount;
+    if (!filtered.length) {
+        el.innerHTML = '<div class="empty" style="padding:12px"><div class="empty-icon">\u{1F4E8}</div>Se\u00E7ilen filtre i\u00E7in kay\u0131t bulunamad\u0131</div>';
+        return;
+    }
+    el.innerHTML = filtered.slice().reverse().map(function(s) {
+        var d = new Date(s.date);
+        var t = d.toLocaleDateString('tr-TR') + ' ' + d.toLocaleTimeString('tr-TR');
+        var cls = getSentStatusClass(s.status);
+        return '<div class="sent-item"><span class="sent-num">' + esc(s.number) + '</span><span class="sent-acc">' + esc(s.account || '-') + '</span><span class="sent-status ' + cls + '">' + esc(getSentReasonText(s)) + '</span><span class="sent-date">' + t + '</span></div>';
+    }).join('');
+}
+
+function updateSpeedyModeUiOnLoad() {
+    if (document.getElementById('chk-speedy').checked) toggleSpeedyMode();
+}
+
+function requestNotificationPermissionIfNeeded() {
+    if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+    }
+}
+
+function primeReplyAudio() {
+    ensureReplyAudio();
 }
 
 function log(text, cls) {
@@ -770,25 +959,6 @@ function loadSentLog() {
     });
 }
 
-function renderSentLog() {
-    var el = document.getElementById('sent-list');
-    var okCount = sentLogData.filter(function(s){return s.status === 'ba\u015Far\u0131l\u0131'}).length;
-    var errCount = sentLogData.length - okCount;
-    document.getElementById('sent-total').textContent = sentLogData.length;
-    document.getElementById('sent-ok').textContent = okCount;
-    document.getElementById('sent-err').textContent = errCount;
-    if (!sentLogData.length) {
-        el.innerHTML = '<div class="empty" style="padding:12px"><div class="empty-icon">\u{1F4E8}</div>Hen\u00FCz g\u00F6nderim yap\u0131lmad\u0131</div>';
-        return;
-    }
-    el.innerHTML = sentLogData.slice().reverse().map(function(s) {
-        var d = new Date(s.date);
-        var t = d.toLocaleDateString('tr-TR') + ' ' + d.toLocaleTimeString('tr-TR');
-        var cls = s.status === 'ba\u015Far\u0131l\u0131' ? 'ok' : 'err';
-        return '<div class="sent-item"><span class="sent-num">' + esc(s.number) + '</span><span class="sent-acc">' + esc(s.account) + '</span><span class="sent-status ' + cls + '">' + esc(s.status) + '</span><span class="sent-date">' + t + '</span></div>';
-    }).join('');
-}
-
 // ── Notes ───────────────────────────────────────────────
 function loadNotes() {
     fetch('/api/notes').then(function(r){return r.json()}).then(function(data) {
@@ -800,13 +970,13 @@ function loadNotes() {
 function renderNotes() {
     var el = document.getElementById('notes-list');
     if (!notesData.length) {
-        el.innerHTML = '<div class="empty" style="padding:12px"><div class="empty-icon">\u{1F4DD}</div>Hen\u00FCz not eklenmedi</div>';
+        el.innerHTML = '<div class="empty" style="padding:12px"><div class="empty-icon">📝</div>Henüz not eklenmedi</div>';
         return;
     }
     el.innerHTML = notesData.slice().reverse().map(function(n) {
         var d = new Date(n.date);
         var t = d.toLocaleDateString('tr-TR') + ' ' + d.toLocaleTimeString('tr-TR');
-        return '<div class="note-item"><div class="note-text">' + esc(n.content) + '</div><div class="note-footer"><span class="note-date">' + t + '</span><button class="btn btn-ghost btn-sm" onclick="deleteNote(' + n.id + ')">\u2715</button></div></div>';
+        return '<div class="note-item"><div class="note-text">' + esc(n.content) + '</div><div class="note-footer"><span class="note-date">' + t + '</span><button class="btn btn-ghost btn-sm" onclick="deleteNote(' + n.id + ')">✕</button></div></div>';
     }).join('');
 }
 
@@ -844,7 +1014,7 @@ function renderReplies() {
     document.getElementById('replies-total').textContent = repliesData.length;
     updateReplyBadge();
     if (!repliesData.length) {
-        el.innerHTML = '<div class="empty" style="padding:12px"><div class="empty-icon">\u{1F4E9}</div>Hen\u00FCz d\u00F6n\u00FC\u015F yok</div>';
+        el.innerHTML = '<div class="empty" style="padding:12px"><div class="empty-icon">📩</div>Henüz dönüş yok</div>';
         return;
     }
     el.innerHTML = repliesData.slice().reverse().map(function(r) {
@@ -1195,10 +1365,13 @@ loadProxy();
 checkTorStatus();
 updateSendBtnProxy();
 updateModeStyles();
+updateSpeedyModeUiOnLoad();
+requestNotificationPermissionIfNeeded();
+primeReplyAudio();
 
-if ('Notification' in window && Notification.permission === 'default') {
-    Notification.requestPermission();
-}
+['click','keydown'].forEach(function(evt) {
+    window.addEventListener(evt, unlockReplyAudio, { once: true });
+});
 
 // Proxy inputlar\u0131 de\u011fi\u015fince test\u0131 s\u0131f\u0131rla
 ['proxy-type','proxy-host','proxy-port','proxy-user','proxy-pass'].forEach(function(id) {

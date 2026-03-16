@@ -23,6 +23,13 @@ const accounts = {};
 
 let sendingInProgress = false;
 let stopRequested = false;
+const SEND_PAUSE_POLL_MS = 1500;
+const SPEEDY_MODE_DEFAULTS = {
+    delayMin: 1000,
+    delayMax: 2000,
+    antiSpam: { warmup: false, typing: false, offline: false, torIp: false }
+};
+const SKIPPED_STATUS = 'atlandı';
 
 // ─── Veri dizini (ASAR dışında yazılabilir alan) ────────────────────────────
 // Electron portable EXE'de __dirname ASAR içine işaret eder (read-only).
@@ -212,6 +219,37 @@ function saveReplies() {
 
 function rebuildSentNumbers() {
     sentNumbers = new Set(sentLog.filter(s => s.status === 'ba\u015Far\u0131l\u0131').map(s => s.number.replace(/\D/g, '')));
+}
+
+function normalizeNumber(value) {
+    return String(value || '').trim().replace(/\D/g, '');
+}
+
+function appendSentLog(entry) {
+    sentLog.push(entry);
+    saveSentLog();
+    io.emit('sent-log-update', sentLog);
+}
+
+function emitSkippedNumber(number, total, skippedCount, successCount, errorCount, reason) {
+    appendSentLog({
+        number,
+        account: '-',
+        status: SKIPPED_STATUS,
+        reason,
+        date: new Date().toISOString()
+    });
+    io.emit('send-progress', {
+        number,
+        accountId: null,
+        accountName: '-',
+        status: SKIPPED_STATUS,
+        error: reason,
+        total,
+        skippedCount,
+        successCount,
+        errorCount
+    });
 }
 
 loadMessagesFromFile();
@@ -1185,7 +1223,7 @@ app.post('/api/send', (req, res) => {
         return res.status(400).json({ error: 'Gönderim zaten devam ediyor' });
     }
 
-    const { numbers, message, messages: msgList, messageMode, delayMin, delayMax, burstCount, burstPause, antiSpam } = req.body;
+    const { numbers, message, messages: msgList, messageMode, delayMin, delayMax, burstCount, burstPause, antiSpam, speedyMode } = req.body;
 
     if (!numbers || numbers.length === 0) {
         return res.status(400).json({ error: 'Numara listesi boş' });
@@ -1202,12 +1240,29 @@ app.post('/api/send', (req, res) => {
         return res.status(400).json({ error: 'Hiç bağlı hesap yok' });
     }
 
-    const validNumbers = numbers
-        .map(n => String(n).trim().replace(/\D/g, ''))
-        .filter(n => n.length >= 10);
+    const seenInBatch = new Set();
+    const validNumbers = [];
+    let skippedCount = 0;
+
+    numbers.forEach(rawNumber => {
+        const normalized = normalizeNumber(rawNumber);
+        if (normalized.length < 10) return;
+        if (seenInBatch.has(normalized)) {
+            skippedCount++;
+            emitSkippedNumber(normalized, numbers.length, skippedCount, 0, 0, 'Aynı listede tekrar numara');
+            return;
+        }
+        seenInBatch.add(normalized);
+        if (sentNumbers.has(normalized)) {
+            skippedCount++;
+            emitSkippedNumber(normalized, numbers.length, skippedCount, 0, 0, 'Önceden başarılı gönderilmiş');
+            return;
+        }
+        validNumbers.push(normalized);
+    });
 
     if (validNumbers.length === 0) {
-        return res.status(400).json({ error: 'Geçerli numara bulunamadı' });
+        return res.status(400).json({ error: 'Gönderilecek yeni geçerli numara bulunamadı' });
     }
 
     const opts = {
@@ -1215,11 +1270,19 @@ app.post('/api/send', (req, res) => {
         delayMax:   Math.max(2000,  parseInt(delayMax)  || 45000),
         burstCount: Math.max(1,     parseInt(burstCount) || 10),
         burstPause: Math.max(60000, parseInt(burstPause) || 300000),
-        antiSpam: antiSpam || { warmup: true, typing: true, offline: true, torIp: true }
+        antiSpam: antiSpam || { warmup: true, typing: true, offline: true, torIp: true },
+        speedyMode: !!speedyMode,
+        skippedCount
     };
-    if (opts.delayMax < opts.delayMin) opts.delayMax = opts.delayMin + 5000;
+    if (opts.speedyMode) {
+        opts.delayMin = SPEEDY_MODE_DEFAULTS.delayMin;
+        opts.delayMax = SPEEDY_MODE_DEFAULTS.delayMax;
+        opts.antiSpam = { ...SPEEDY_MODE_DEFAULTS.antiSpam };
+    } else if (opts.delayMax < opts.delayMin) {
+        opts.delayMax = opts.delayMin + 5000;
+    }
 
-    res.json({ success: true, total: validNumbers.length });
+    res.json({ success: true, total: validNumbers.length, skippedCount });
 
     stopRequested = false;
     sendingInProgress = true;
@@ -1240,12 +1303,56 @@ app.post('/api/stop', (req, res) => {
 // ─── Core send logic (Anti-Spam Enhanced) ───────────────────────────────────
 
 async function sendMessages(numbers, messageList, messageMode, accountIds, opts) {
-    io.emit('send-started', { total: numbers.length });
+    io.emit('send-started', { total: numbers.length, skippedCount: opts.skippedCount || 0 });
 
     let successCount = 0;
     let errorCount   = 0;
+    let skippedCount = opts.skippedCount || 0;
     let sentThisBurst = 0;
     let totalSent = 0;
+    let pausedForAccounts = false;
+
+    async function waitForConnectedAccount(index) {
+        while (!stopRequested) {
+            const alive = Object.keys(accounts).filter(id => accounts[id]?.status === 'bağlı' && accounts[id]?.client);
+            if (alive.length > 0) {
+                if (pausedForAccounts) {
+                    pausedForAccounts = false;
+                    io.emit('send-resumed', { index, total: numbers.length, accountCount: alive.length });
+                }
+                return alive;
+            }
+            if (!pausedForAccounts) {
+                pausedForAccounts = true;
+                io.emit('send-paused', { index, total: numbers.length, reason: 'no-accounts' });
+                io.emit('send-log', { text: '⏸ Bağlı hesap kalmadı — yeni hesap bekleniyor', type: 'warn' });
+            }
+            await sleep(SEND_PAUSE_POLL_MS);
+        }
+        return [];
+    }
+
+    function getAliveAccounts() {
+        return Object.keys(accounts).filter(id => accounts[id]?.status === 'bağlı' && accounts[id]?.client);
+    }
+
+    function emitProgress(payload) {
+        io.emit('send-progress', {
+            total: numbers.length,
+            successCount,
+            errorCount,
+            skippedCount,
+            ...payload
+        });
+    }
+
+    function emitStopped(index) {
+        io.emit('send-stopped', { index, total: numbers.length, successCount, errorCount, skippedCount });
+    }
+
+    function emitCompleted() {
+        io.emit('send-complete', { total: numbers.length, successCount, errorCount, skippedCount });
+    }
 
     // ─── Akıllı warm-up: İlk mesajlar çok daha yavaş ───
     const WARMUP_COUNT = 5;     // İlk 5 mesaj warm-up fazında
@@ -1280,21 +1387,26 @@ async function sendMessages(numbers, messageList, messageMode, accountIds, opts)
     }
 
     function pickAccount() {
-        const alive = accountIds.filter(id => accounts[id]?.status === 'bağlı' && accounts[id]?.client);
+        const alive = getAliveAccounts();
         if (alive.length === 0) return null;
         return alive[totalSent % alive.length];
     }
 
     for (let i = 0; i < numbers.length; i++) {
         if (stopRequested) {
-            io.emit('send-stopped', { index: i, total: numbers.length, successCount, errorCount });
+            emitStopped(i);
+            return;
+        }
+
+        const aliveAccounts = await waitForConnectedAccount(i);
+        if (stopRequested || aliveAccounts.length === 0) {
+            emitStopped(i);
             return;
         }
 
         const accountId = pickAccount();
         if (!accountId) {
-            io.emit('send-log', { text: '⚠ Tüm hesapların bağlantısı kesildi — gönderim durduruluyor', type: 'err' });
-            io.emit('send-stopped', { index: i, total: numbers.length, successCount, errorCount });
+            emitStopped(i);
             return;
         }
         const client = accounts[accountId]?.client;
@@ -1361,38 +1473,32 @@ async function sendMessages(numbers, messageList, messageMode, accountIds, opts)
             totalSent++;
 
             // Gönderim kaydını logla
-            sentLog.push({
+            appendSentLog({
                 number, account: accounts[accountId]?.name || accountId,
                 status: 'başarılı', date: new Date().toISOString()
             });
-            sentNumbers.add(number.replace(/\D/g, ''));
-            saveSentLog();
-            io.emit('sent-log-update', sentLog);
+            sentNumbers.add(normalizeNumber(number));
 
-            io.emit('send-progress', {
+            emitProgress({
                 number, accountId,
                 accountName: accounts[accountId]?.name || accountId,
                 status: 'başarılı',
-                index: i + 1, total: numbers.length,
-                successCount, errorCount
+                index: i + 1
             });
         } catch (err) {
             errorCount++;
             totalSent++;
 
-            sentLog.push({
+            appendSentLog({
                 number, account: accounts[accountId]?.name || accountId,
                 status: 'hata', error: err.message, date: new Date().toISOString()
             });
-            saveSentLog();
-            io.emit('sent-log-update', sentLog);
 
-            io.emit('send-progress', {
+            emitProgress({
                 number, accountId,
                 accountName: accounts[accountId]?.name || accountId,
                 status: 'hata', error: err.message,
-                index: i + 1, total: numbers.length,
-                successCount, errorCount
+                index: i + 1
             });
         }
 
@@ -1469,8 +1575,8 @@ async function sendMessages(numbers, messageList, messageMode, accountIds, opts)
         }
     }
 
-    io.emit('send-complete', { total: numbers.length, successCount, errorCount });
-    console.log(`📨 Gönderim tamamlandı — Başarılı: ${successCount}, Hatalı: ${errorCount}`);
+    emitCompleted();
+    console.log(`📨 Gönderim tamamlandı — Başarılı: ${successCount}, Hatalı: ${errorCount}, Atlanan: ${skippedCount}`);
 }
 
 // ─── Unhandled errors — sunucunun crash olmasını önle ───────────────────────
