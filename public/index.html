@@ -1015,7 +1015,7 @@
             box-shadow:inset 0 1px 0 rgba(255,255,255,0.18);
         }
         .reply-conversation-main { min-width:0; flex:1; display:flex; flex-direction:column; gap:6px; }
-        .reply-conversation-top, .reply-conversation-bottom { display:flex; align-items:center; gap:10px; }
+        .reply-conversation-top, .reply-conversation-bottom, .reply-conversation-meta { display:flex; align-items:center; gap:10px; min-width:0; }
         .reply-conversation-name {
             font-size:13px;
             font-weight:700;
@@ -1038,6 +1038,7 @@
             overflow:hidden;
             text-overflow:ellipsis;
             white-space:nowrap;
+            flex:1;
         }
         .reply-conversation-preview {
             font-size:12px;
@@ -1046,6 +1047,61 @@
             overflow:hidden;
             text-overflow:ellipsis;
             white-space:nowrap;
+            flex:1;
+        }
+        .reply-conversation-meta {
+            padding-top:1px;
+        }
+        .reply-conversation-bottom {
+            justify-content:space-between;
+        }
+        .reply-conversation-bottom > *:last-child {
+            flex-shrink:0;
+        }
+        .reply-conversation-actions {
+            display:flex;
+            align-items:center;
+            gap:6px;
+            flex-shrink:0;
+            margin-left:auto;
+            padding:2px;
+            border-radius:12px;
+            border:1px solid rgba(255,255,255,0.06);
+            background:rgba(255,255,255,0.035);
+            box-shadow:inset 0 1px 0 rgba(255,255,255,0.03);
+        }
+        .reply-action-btn {
+            width:28px;
+            height:28px;
+            border-radius:9px;
+            border:1px solid rgba(255,255,255,0.08);
+            background:rgba(255,255,255,0.04);
+            color:#dbeafe;
+            display:inline-flex;
+            align-items:center;
+            justify-content:center;
+            cursor:pointer;
+            transition:background .18s ease, border-color .18s ease, transform .18s ease;
+        }
+        .reply-action-btn:hover {
+            transform:translateY(-1px);
+            background:rgba(96,165,250,0.14);
+            border-color:rgba(96,165,250,0.26);
+        }
+        .reply-action-btn.delete:hover {
+            background:rgba(239,68,68,0.14);
+            border-color:rgba(239,68,68,0.28);
+            color:#fecaca;
+        }
+        .reply-action-btn.active {
+            background:rgba(148,163,184,0.16);
+            border-color:rgba(148,163,184,0.3);
+            color:#f8fafc;
+        }
+        .reply-action-btn:disabled {
+            opacity:0.45;
+            cursor:not-allowed;
+            transform:none;
         }
         .reply-unread-chip, .reply-count-chip, .reply-muted-chip {
             display:inline-flex;
@@ -1081,46 +1137,6 @@
         }
         .reply-conversation-item.muted .reply-avatar {
             background:linear-gradient(135deg, rgba(100,116,139,0.88), rgba(148,163,184,0.88));
-        }
-        .reply-conversation-actions {
-            display:flex;
-            align-items:center;
-            gap:6px;
-            flex-shrink:0;
-            margin-left:auto;
-        }
-        .reply-action-btn {
-            width:30px;
-            height:30px;
-            border-radius:10px;
-            border:1px solid rgba(255,255,255,0.08);
-            background:rgba(255,255,255,0.04);
-            color:#dbeafe;
-            display:inline-flex;
-            align-items:center;
-            justify-content:center;
-            cursor:pointer;
-            transition:background .18s ease, border-color .18s ease, transform .18s ease;
-        }
-        .reply-action-btn:hover {
-            transform:translateY(-1px);
-            background:rgba(96,165,250,0.14);
-            border-color:rgba(96,165,250,0.26);
-        }
-        .reply-action-btn.delete:hover {
-            background:rgba(239,68,68,0.14);
-            border-color:rgba(239,68,68,0.28);
-            color:#fecaca;
-        }
-        .reply-action-btn.active {
-            background:rgba(148,163,184,0.16);
-            border-color:rgba(148,163,184,0.3);
-            color:#f8fafc;
-        }
-        .reply-action-btn:disabled {
-            opacity:0.45;
-            cursor:not-allowed;
-            transform:none;
         }
         .reply-detail {
             display:grid;
@@ -1787,12 +1803,6 @@ function ensureReplyAudio() {
     return replyAudio;
 }
 
-function requestNotificationPermissionOnInteraction() {
-    if (!('Notification' in window)) return;
-    if (Notification.permission !== 'default') return;
-    Notification.requestPermission().catch(function() {});
-}
-
 function maybeRefreshRepliesFromServer(key) {
     var hasConversation = !!replyConversations.find(function(item) { return item.key === key; });
     if (hasConversation) return Promise.resolve();
@@ -1919,12 +1929,6 @@ function sendReplyMessage() {
 function ensureReplyConversationVisible(key) {
     if (!key) return;
     maybeRefreshRepliesFromServer(key);
-}
-
-function requestNotificationPermissionIfNeeded() {
-    if ('Notification' in window && Notification.permission === 'default') {
-        Notification.requestPermission().catch(function() {});
-    }
 }
 
 function requestReplyCapabilitiesOnInteraction() {
@@ -2766,9 +2770,101 @@ function getReplyDisplayName(item) {
     return normalized.name || normalized.number || normalized.chatId || 'Bilinmeyen kişi';
 }
 
+function extractReplyNumberCandidates(item) {
+    var normalized = normalizeReplyConversation(item || {});
+    var candidates = [normalized.number, normalized.chatId];
+    repliesData.forEach(function(entry) {
+        if (isSameReplyConversationIdentity(normalized, entry)) {
+            candidates.push(entry.number);
+            candidates.push(entry.chatId);
+        }
+    });
+    return candidates.map(function(value) {
+        var cleaned = String(value || '').trim();
+        if (!cleaned || cleaned === '-') return '';
+        var digits = cleaned.split('@')[0].replace(/\D+/g, '');
+        return digits || cleaned;
+    }).filter(Boolean);
+}
+
 function getReplyDisplayNumber(item) {
-    var normalized = normalizeReplyItem(item);
-    return normalized.number || normalized.chatId || 'Numara bulunamadı';
+    var normalized = normalizeReplyConversation(item || {});
+    var directNumber = String(normalized.number || '').trim();
+    if (directNumber && directNumber !== '-') return directNumber;
+    var matches = repliesData.filter(function(entry) {
+        return isSameReplyConversationIdentity(normalized, entry);
+    });
+    for (var i = matches.length - 1; i >= 0; i--) {
+        var candidateNumber = String(matches[i].number || '').trim();
+        if (candidateNumber && candidateNumber !== '-') return candidateNumber;
+        var candidateChatId = String(matches[i].chatId || '').trim();
+        var derivedDigits = candidateChatId.split('@')[0].replace(/\D+/g, '');
+        if (derivedDigits) return derivedDigits;
+    }
+    var candidates = extractReplyNumberCandidates(normalized);
+    if (candidates.length) return candidates[0];
+    if (normalized.chatId) {
+        var derived = String(normalized.chatId).split('@')[0].replace(/\D+/g, '');
+        if (derived) return derived;
+        return normalized.chatId;
+    }
+    return 'Numara bulunamadı';
+}
+
+function getReplyDisplayNotificationBody(item) {
+    var normalized = normalizeReplyConversation(item || {});
+    var number = getReplyDisplayNumber(normalized);
+    var message = String(normalized.message || normalized.lastMessage || '').trim() || '(mesaj yok)';
+    return number + '\n' + message.substring(0, 100);
+}
+
+function requestNativeNotification(item) {
+    return fetch('/api/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            title: 'Dönüş Var!',
+            body: getReplyDisplayNotificationBody(item),
+            name: getReplyDisplayName(item || {}),
+            number: getReplyDisplayNumber(item || {}),
+            message: String((item && (item.message || item.lastMessage)) || '').trim() || '(mesaj yok)'
+        })
+    }).then(safeJson).catch(function() { return {}; });
+}
+
+function maybeRequestNativeNotification(item) {
+    return requestNativeNotification(item).then(function(result) {
+        return !!(result && result.success);
+    }).catch(function() {
+        return false;
+    });
+}
+
+function canUseSystemNotifications() {
+    if (!window || !window.Notification) return false;
+    if (Notification.permission !== 'granted') return false;
+    return typeof document !== 'undefined' ? document.visibilityState !== 'visible' || !document.hasFocus() : true;
+}
+
+function requestNotificationPermissionOnInteraction() {
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'granted') return;
+    Notification.requestPermission().catch(function() {});
+}
+
+function requestNotificationPermissionIfNeeded() {
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'granted') return;
+    Notification.requestPermission().catch(function() {});
+}
+
+function ensureReplyNotificationVisibility() {
+    if ('Notification' in window && Notification.permission === 'granted') return Promise.resolve(true);
+    return requestNativeNotification({ message: '(izin isteği)' }).then(function() {
+        return 'Notification' in window && Notification.permission === 'granted';
+    }).catch(function() {
+        return false;
+    });
 }
 
 function hideStartupIntro() {
@@ -3223,13 +3319,15 @@ function renderReplies() {
             + '<div class="reply-conversation-name">' + esc(getReplyDisplayName(conv)) + '</div>'
             + '<div class="reply-conversation-date">' + esc(formatReplyDate(conv.lastDate)) + '</div>'
             + '</div>'
+            + '<div class="reply-conversation-meta">'
             + '<div class="reply-conversation-number">' + esc(getReplyDisplayNumber(conv)) + '</div>'
+            + renderReplyConversationActions(conv)
+            + '</div>'
             + '<div class="reply-conversation-bottom">'
             + '<div class="reply-conversation-preview">' + esc(getReplyConversationPreview(conv)) + '</div>'
             + getReplyStatusChip(conv, unread)
             + '</div>'
             + '</div>'
-            + renderReplyConversationActions(conv)
             + '</button>';
     }).join('');
     renderReplyDetail();
@@ -3273,7 +3371,7 @@ function renderReplyDetail() {
     }
 
     messagesEl.innerHTML = history.map(function(item) {
-        var normalized = normalizeReplyItem(item);
+        var normalized = normalizeReplyHistoryItem(item, selectedReplyConversation);
         var outgoing = normalized.direction === 'out';
         return '<div class="reply-bubble-wrap' + (outgoing ? ' out' : '') + '">'
             + '<div class="reply-bubble">'
@@ -3302,13 +3400,24 @@ function updateReplyBadge() {
 
 function showReplyNotification(item) {
     if (shouldSuppressReplyUi(item)) return;
-    if (!('Notification' in window) || Notification.permission !== 'granted') return;
-    var normalized = normalizeReplyItem(item);
+    var normalized = normalizeReplyConversation(item || {});
     var sender = getReplyDisplayName(normalized);
-    var number = getReplyDisplayNumber(normalized);
-    new Notification('Dönüş Var!', {
-        body: sender + ' • ' + number + '\n' + normalized.message.substring(0, 100),
-        icon: 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>\u{1F4E9}</text></svg>'
+    var body = getReplyDisplayNotificationBody(normalized);
+    if ('Notification' in window && Notification.permission === 'granted') {
+        try {
+            var notification = new Notification('Dönüş Var!', {
+                body: sender + ' • ' + body,
+                requireInteraction: true,
+                silent: true,
+                icon: 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>\u{1F4E9}</text></svg>'
+            });
+            notification.onclick = function() { window.focus(); };
+        } catch (_) {}
+    }
+    requestNativeNotification({
+        name: sender,
+        number: getReplyDisplayNumber(normalized),
+        message: String(normalized.message || normalized.lastMessage || '').trim() || '(mesaj yok)'
     });
 }
 

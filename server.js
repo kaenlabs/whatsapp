@@ -10,6 +10,10 @@ const { exec, spawn, execSync, spawnSync } = require('child_process');
 const net = require('net');
 const zlib = require('zlib');
 const os = require('os');
+let ElectronNotification = null;
+try {
+    ElectronNotification = require('electron').Notification;
+} catch (_) {}
 
 const app = express();
 const server = http.createServer(app);
@@ -1376,6 +1380,32 @@ app.post('/api/log', (req, res) => {
     const { level, message, extra } = req.body || {};
     logRendererEvent(level || 'info', message || 'renderer-log', extra || {});
     res.json({ success: true });
+});
+
+app.post('/api/notify', (req, res) => {
+    const payload = req.body || {};
+    const title = String(payload.title || 'Dönüş Var!').trim() || 'Dönüş Var!';
+    const name = String(payload.name || '').trim();
+    const number = String(payload.number || '').trim();
+    const message = String(payload.message || payload.body || '').trim() || '(mesaj yok)';
+    const body = [name || number, message].filter(Boolean).join('\n').slice(0, 240);
+
+    if (!ElectronNotification || typeof ElectronNotification.isSupported !== 'function' || !ElectronNotification.isSupported()) {
+        return res.json({ success: false, reason: 'unsupported' });
+    }
+
+    try {
+        const notification = new ElectronNotification({
+            title,
+            body,
+            silent: true
+        });
+        notification.show();
+        res.json({ success: true });
+    } catch (err) {
+        logRendererEvent('warn', 'native-notify-failed', { error: err.message || String(err) });
+        res.json({ success: false, reason: err.message || 'notify-failed' });
+    }
 });
 
 function appendSentLog(entry) {
