@@ -1698,11 +1698,11 @@ socket.on('reply-received', function(r) {
     requestReplyCapabilitiesAfterReply(resolveReplyKey(r));
     upsertReplyItem(r);
     maybeIncrementReplyUnread(r);
+    maybePlayReplyEffects(r);
     renderReplies();
     if (selectedReplyKey && resolveReplyKey(r) === selectedReplyKey) {
         loadReplyHistory(selectedReplyConversation || r, { silent: true, force: true });
     }
-    maybePlayReplyEffects(r);
     sendClientLog('info', 'reply-received-ui', {
         number: r.number,
         chatId: r.chatId || '',
@@ -1712,6 +1712,25 @@ socket.on('reply-received', function(r) {
     });
     log('\u{1F4E9} D\u00F6n\u00FC\u015F: ' + (r.number || '-') + (r.name ? ' (' + r.name + ')' : '') + ' \u2014 ' + String(r.message || '').substring(0, 60) + (isReplyMuted(r) ? ' [sessiz]' : ''), 'info');
 });
+
+function syncReplyHistoryKeyAliases(primaryKey, alternateKey) {
+    if (!primaryKey || !alternateKey || primaryKey === alternateKey) return;
+    var primary = replyHistoryCache[primaryKey] || [];
+    var alternate = replyHistoryCache[alternateKey] || [];
+    if (!primary.length && alternate.length) {
+        replyHistoryCache[primaryKey] = alternate.slice();
+        return;
+    }
+    if (primary.length && !alternate.length) {
+        replyHistoryCache[alternateKey] = primary.slice();
+        return;
+    }
+    if (primary.length && alternate.length) {
+        var merged = normalizeReplyHistoryMessages(primary.concat(alternate));
+        replyHistoryCache[primaryKey] = merged;
+        replyHistoryCache[alternateKey] = merged.slice();
+    }
+}
 socket.on('reply-conversation-updated', function(payload) {
     if (!payload) return;
     handleReplyConversationSocketPayload(payload);
@@ -1742,15 +1761,21 @@ socket.on('reply-chat-updated', function(payload) {
 });
 socket.on('reply-manual-message', function(item) {
     if (!item) return;
+    var selectedBefore = selectedReplyConversation ? normalizeReplyConversation(selectedReplyConversation) : null;
     upsertReplyItem(item);
-    var key = resolveReplyKey(item);
-    if (key) {
-        if (!replyHistoryCache[key]) replyHistoryCache[key] = [];
-        replyHistoryCache[key].push(normalizeReplyItem(item));
-        replyHistoryCache[key] = replyHistoryCache[key].slice(-5);
+    var canonicalConversation = getReplyTargetConversation(item);
+    var key = resolveReplyKey(canonicalConversation || item);
+    var selectedKeyBefore = selectedBefore ? resolveReplyKey(selectedBefore) : '';
+    if (key) upsertReplyHistoryEntry(key, item, canonicalConversation || selectedBefore || item);
+    if (selectedBefore && isSameReplyConversationIdentity(selectedBefore, canonicalConversation || item)) {
+        if (selectedKeyBefore && key) syncReplyHistoryKeyAliases(key, selectedKeyBefore);
+        selectedReplyConversation = canonicalConversation || selectedBefore;
+        selectedReplyKey = resolveReplyKey(selectedReplyConversation) || selectedKeyBefore;
     }
     renderReplies();
-    if (selectedReplyKey && selectedReplyKey === key) renderReplyDetail();
+    if (selectedReplyKey && (selectedReplyKey === key || (selectedBefore && isSameReplyConversationIdentity(selectedBefore, canonicalConversation || item)))) {
+        renderReplyDetail();
+    }
 });
 
 function ensureReplyAudio() {
@@ -1850,6 +1875,7 @@ function sendReplyMessage() {
     var message = input.value.trim();
     if (!message) return;
     var conversation = getReplyTargetConversation(selectedReplyConversation);
+    var previousSelectedKey = selectedReplyKey;
     var payload = getReplyConversationRequestParams(conversation);
     payload.message = message;
     replySendInProgress = true;
@@ -1865,7 +1891,16 @@ function sendReplyMessage() {
         replyChatStatusMessage = 'Mesaj gönderildi';
         if (data.item) {
             upsertReplyItem(data.item);
-            loadReplyHistory(data.item, { force: true, silent: true });
+            var canonicalConversation = getReplyTargetConversation(data.item);
+            var canonicalKey = resolveReplyKey(canonicalConversation || data.item);
+            if (canonicalKey) {
+                upsertReplyHistoryEntry(canonicalKey, data.item, canonicalConversation || conversation);
+                if (previousSelectedKey && previousSelectedKey !== canonicalKey) {
+                    syncReplyHistoryKeyAliases(canonicalKey, previousSelectedKey);
+                }
+            }
+            syncSelectedReplyConversationFromItem(canonicalConversation || data.item);
+            loadReplyHistory(canonicalConversation || data.item, { force: true, silent: true });
         } else {
             loadReplyHistory(conversation, { force: true, silent: true });
         }
@@ -2391,6 +2426,10 @@ function esc(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+function escAttr(s) {
+    return esc(s).replace(/'/g, '&#39;');
+}
+
 function escJsSingle(s) {
     return String(s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r/g, '\\r').replace(/\n/g, '\\n');
 }
@@ -2515,6 +2554,46 @@ function syncReplyConversationIdentifiers(target, source) {
     if (!target.account && source.account) target.account = source.account;
     target.key = getReplyConversationKey(target);
     return target;
+}
+
+function isSameReplyConversationIdentity(left, right) {
+    if (!left || !right) return false;
+    var leftChatId = String(left.chatId || '').trim();
+    var rightChatId = String(right.chatId || '').trim();
+    if (leftChatId && rightChatId && leftChatId === rightChatId) return true;
+    var leftNumber = String(left.number || '').trim();
+    var rightNumber = String(right.number || '').trim();
+    var leftAccountId = String(left.accountId || '').trim();
+    var rightAccountId = String(right.accountId || '').trim();
+    if (leftNumber && rightNumber && leftNumber === rightNumber) {
+        return !leftAccountId || !rightAccountId || leftAccountId === rightAccountId;
+    }
+    return false;
+}
+
+function upsertReplyHistoryEntry(key, item, fallback) {
+    if (!key) return [];
+    var normalized = normalizeReplyHistoryItem(item, fallback);
+    var history = (replyHistoryCache[key] || []).slice();
+    var index = history.findIndex(function(existing) {
+        return String(existing.id) === String(normalized.id)
+            || ((existing.chatId || normalized.chatId) && existing.chatId === normalized.chatId && existing.message === normalized.message && existing.date === normalized.date && existing.direction === normalized.direction);
+    });
+    if (index >= 0) history[index] = syncReplyConversationIdentifiers(history[index], normalized);
+    else history.push(normalized);
+    history = normalizeReplyHistoryMessages(history, fallback || normalized);
+    replyHistoryCache[key] = history;
+    return history;
+}
+
+function syncSelectedReplyConversationFromItem(item) {
+    if (!item) return selectedReplyConversation;
+    var target = getReplyTargetConversation(item);
+    if (!selectedReplyConversation || isSameReplyConversationIdentity(selectedReplyConversation, target) || resolveReplyKey(target) === selectedReplyKey) {
+        selectedReplyConversation = target;
+        selectedReplyKey = resolveReplyKey(target);
+    }
+    return selectedReplyConversation;
 }
 
 function resolveReplyConversationByKey(key) {
@@ -2678,10 +2757,8 @@ function mutateReplyConversation(url, body, successMessage) {
     });
 }
 
-function normalizeReplyHistoryMessages(messages) {
-    return (messages || []).map(normalizeReplyItem).sort(function(a, b) {
-        return new Date(a.date).getTime() - new Date(b.date).getTime();
-    }).slice(-5);
+function getReplyDisplayMuteLabel(item) {
+    return isReplyMuted(item) ? 'Sessizde' : '';
 }
 
 function getReplyDisplayName(item) {
@@ -3120,6 +3197,9 @@ function selectReplyConversation(key) {
 
 function renderReplies() {
     var el = document.getElementById('replies-list');
+    if (!replyConversations.length && repliesData.length) {
+        replyConversations = buildReplyConversationsFromItems();
+    }
     var totalReplies = repliesData.length;
     document.getElementById('replies-total').textContent = totalReplies;
     document.getElementById('replies-conversation-count').textContent = replyConversations.length + ' sohbet';
