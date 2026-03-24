@@ -276,6 +276,23 @@ const keyEl = document.getElementById('license-key');
 const btnEl = document.getElementById('activate-btn');
 const metaEl = document.getElementById('install-meta');
 
+window.addEventListener('error', function(event) {
+    setStatus('Arayüz hatası: ' + (event && event.message ? event.message : 'Bilinmeyen hata'), 'err');
+});
+
+window.addEventListener('unhandledrejection', function(event) {
+    const reason = event && event.reason;
+    const message = reason && reason.message ? reason.message : String(reason || 'Bilinmeyen promise hatası');
+    setStatus('Aktivasyon hatası: ' + message, 'err');
+});
+
+ipcRenderer.on('license-debug', (_event, payload) => {
+    if (!payload || !payload.message) return;
+    setStatus(payload.message, payload.type || '');
+});
+
+console.log('[LicenseRenderer] hazır');
+
 function setStatus(message, type) {
     statusEl.textContent = message;
     statusEl.className = 'status' + (type ? ' ' + type : '');
@@ -294,6 +311,9 @@ function activateLicense() {
         btnEl.disabled = false;
         if (result && result.ok) {
             setStatus(result.message || 'Lisans doğrulandı. Uygulama açılıyor...', 'ok');
+            setTimeout(() => {
+                ipcRenderer.send('license-activation-complete');
+            }, 250);
             return;
         }
         setStatus(result && result.message ? result.message : 'Lisans doğrulanamadı.', 'err');
@@ -338,6 +358,7 @@ function hideLicenseWindow() {
 }
 
 function showLicenseWindow(state, message, type) {
+    console.log('[License] showLicenseWindow çağrıldı');
     if (!licenseWindow || licenseWindow.isDestroyed()) {
         createLicenseWindow();
     }
@@ -977,8 +998,15 @@ ipcMain.on('license-cancel', () => {
     app.quit();
 });
 
+ipcMain.on('license-activation-complete', () => {
+    hideLicenseWindow();
+    showSplashWindow();
+    runChecks();
+});
+
 ipcMain.handle('license-activate', async (_event, payload) => {
     const licenseKey = String(payload && payload.licenseKey ? payload.licenseKey : '').trim();
+    console.log('[License] activation istendi');
     if (!licenseKey) {
         return { ok: false, message: 'Lisans anahtarı boş olamaz.' };
     }
@@ -986,6 +1014,7 @@ ipcMain.handle('license-activate', async (_event, payload) => {
     const currentState = getOrCreateLicenseState();
     try {
         const result = await verifyLicenseWithServer(licenseKey, currentState.installationId, 'activate');
+        console.log('[License] activation sonucu:', result);
         if (!result.ok) {
             writeLicenseFile({
                 ...currentState,
@@ -994,6 +1023,7 @@ ipcMain.handle('license-activate', async (_event, payload) => {
                 lastError: result.message,
                 status: 'invalid'
             });
+            licenseWindow?.webContents?.send('license-debug', { message: result.message || 'Lisans etkinleştirilemedi.', type: 'err' });
             return { ok: false, message: result.message || 'Lisans etkinleştirilemedi.' };
         }
 
@@ -1007,11 +1037,10 @@ ipcMain.handle('license-activate', async (_event, payload) => {
             status: 'active'
         });
 
-        hideLicenseWindow();
-        showSplashWindow();
-        runChecks();
+        licenseWindow?.webContents?.send('license-debug', { message: result.message || 'Lisans doğrulandı. Uygulama açılıyor...', type: 'ok' });
         return { ok: true, message: result.message || 'Lisans doğrulandı. Uygulama açılıyor...' };
     } catch (err) {
+        console.log('[License] activation exception:', err.message || String(err));
         writeLicenseFile({
             ...currentState,
             licenseKey,
@@ -1019,6 +1048,7 @@ ipcMain.handle('license-activate', async (_event, payload) => {
             lastError: err.message || String(err),
             status: 'offline'
         });
+        licenseWindow?.webContents?.send('license-debug', { message: err.message || 'Lisans sunucusuna ulaşılamadı.', type: 'err' });
         return { ok: false, message: err.message || 'Lisans sunucusuna ulaşılamadı.' };
     }
 });

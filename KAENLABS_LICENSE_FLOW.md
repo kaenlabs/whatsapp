@@ -441,3 +441,208 @@ Bu kısmı doğrudan başka AI’a verebilirsiniz:
 ## 15. Not
 
 Eğer KaenLabs tarafındaki mevcut `verify.php` request formatı biraz farklıysa, backend ya desktop payload’ını buna adapte etmeli ya da Electron uygulama aynı sözleşmeye göre güncellenmelidir. En temiz yöntem, desktop için yukarıdaki sözleşmeyi standart kabul etmektir.
+
+---
+
+## 16. Mevcut gerçek sorun (debug notu)
+
+Şu anda desktop uygulama lisans anahtarını gönderiyor, fakat KaenLabs API isteği daha lisans kontrolüne geçmeden **imza hatası** ile reddediyor.
+
+Yani sorun şurada değil:
+- lisans input alanı
+- butonun tıklanması
+- Electron IPC akışı
+- anahtar formatı
+
+Sorun büyük ihtimalle şurada:
+- KaenLabs `verify.php` request body'yi farklı formatta bekliyor
+- veya HMAC imzayı farklı şekilde hesaplıyor
+- veya `signature` alanını ayırmadan tüm body üzerinden kontrol yapıyor
+- veya field sırası / JSON encode biçimi desktop tarafıyla birebir aynı değil
+
+Desktop uygulamada test edildiğinde endpoint şu cevabı döndürüyor:
+
+```json
+{
+  "valid": false,
+  "message": "Gecersiz imza.",
+  "signature": "..."
+}
+```
+
+Bu, isteğin sunucuya ulaştığını ama backend'in request signature doğrulamasında kaldığını gösterir.
+
+### Desktop uygulamanın gerçekten gönderdiği payload mantığı
+
+Desktop uygulama aşağıdaki alanları gönderir:
+
+```json
+{
+  "license_key": "AE51-4D3D-7176-CAAF",
+  "domain": "desktop:<installation_id>",
+  "product": "whatsapp-sender",
+  "action": "activate",
+  "server_ip": "",
+  "timestamp": 1719999999,
+  "signature": "hmac_sha256"
+}
+```
+
+İmza üretimi şu mantıkla yapılır:
+
+1. Önce `signature` alanı OLMADAN payload oluşturulur
+2. Sonra şu hesap yapılır:
+
+```php
+$payload = [
+  'license_key' => 'AE51-4D3D-7176-CAAF',
+  'domain' => 'desktop:INSTALLATION_ID',
+  'product' => 'whatsapp-sender',
+  'action' => 'activate',
+  'server_ip' => '',
+  'timestamp' => 1719999999
+];
+
+$signature = hash_hmac('sha256', json_encode($payload), LICENSE_SECRET);
+```
+
+3. Sonra request body'ye `signature` alanı eklenip JSON olarak POST edilir.
+
+Yani backend doğrulama yaparken:
+- ham JSON body okunmalı
+- JSON parse edilmeli
+- `signature` alanı ayrılmalı
+- kalan payload tekrar `json_encode(...)` ile aynı sırada encode edilmeli
+- aynı `LICENSE_SECRET` ile `hash_hmac('sha256', ...)` hesaplanmalı
+- gelen imza ile karşılaştırılmalı
+
+### Backend tarafında özellikle kontrol edilmesi gerekenler
+
+KaenLabs tarafındaki başka AI / geliştirici şunları kontrol etsin:
+
+1. Request `application/json` olarak mı okunuyor?
+   - `$_POST` ile değil, ham body ile okunmalı
+   - örnek: `file_get_contents('php://input')`
+
+2. `signature` alanı kontrol öncesi payload'dan çıkarılıyor mu?
+   - imza hesaplanırken `signature` alanı dahil edilmemeli
+
+3. `json_encode` ile üretilen string desktop tarafıyla aynı mı?
+   - alan isimleri aynı olmalı
+   - alan sırası bozulmamalı
+   - boş string alanı (`server_ip: ""`) korunmalı
+
+4. Secret birebir aynı mı?
+
+```text
+K4eN_L4b5_2026_pr0d_s3cur1ty
+```
+
+5. Response da imzalanıyor mu?
+   - desktop uygulama response içinde de `signature` bekliyor
+   - response HMAC doğrulaması da yapıyor
+
+### KaenLabs tarafı için minimum çalışan request doğrulama örneği
+
+Aşağıdaki örnek mantık desktop uygulama ile uyumludur:
+
+```php
+<?php
+const LICENSE_SECRET = 'K4eN_L4b5_2026_pr0d_s3cur1ty';
+
+function read_json_request() {
+    $raw = file_get_contents('php://input');
+    $data = json_decode($raw, true);
+
+    if (!is_array($data)) {
+        return [null, 'Geçersiz JSON body'];
+    }
+
+    return [$data, null];
+}
+
+function verify_request_signature(array $request): bool {
+    $received = isset($request['signature']) ? (string)$request['signature'] : '';
+    if ($received === '') {
+        return false;
+    }
+
+    $payload = $request;
+    unset($payload['signature']);
+
+    $expected = hash_hmac('sha256', json_encode($payload), LICENSE_SECRET);
+    return hash_equals($expected, $received);
+}
+
+function sign_response(array $payload): array {
+    $payload['signature'] = hash_hmac('sha256', json_encode($payload), LICENSE_SECRET);
+    return $payload;
+}
+
+[$request, $error] = read_json_request();
+
+if ($error) {
+    echo json_encode(sign_response([
+        'valid' => false,
+        'status' => 'bad_request',
+        'message' => $error
+    ]));
+    exit;
+}
+
+if (!verify_request_signature($request)) {
+    echo json_encode(sign_response([
+        'valid' => false,
+        'status' => 'invalid_signature',
+        'message' => 'Gecersiz imza.'
+    ]));
+    exit;
+}
+
+// Buradan sonra lisans bulunup activate/verify mantığı çalıştırılmalı.
+```
+
+### Başka AI'a verilecek kısa sorun özeti
+
+> Desktop uygulama lisans isteğini başarıyla gönderiyor ancak KaenLabs `verify.php` endpoint'i request'i `Gecersiz imza.` cevabıyla reddediyor. Sorun UI'da değil, backend request signature doğrulamasında. Backend tarafı `application/json` body'yi ham olarak okuyup `signature` alanını çıkardıktan sonra kalan payload için `hash_hmac('sha256', json_encode($payload), LICENSE_SECRET)` yapmalı. Response tarafı da aynı secret ile imzalanmalı. Desktop payload formatı `license_key`, `domain`, `product`, `action`, `server_ip`, `timestamp`, `signature` alanlarından oluşuyor ve `domain` değeri `desktop:<installation_id>` formatında geliyor.
+
+---
+
+## 17. Hızlı görev cümlesi
+
+Bu kısa metni doğrudan başka AI'a verebilirsiniz:
+
+> KaenLabs `verify.php` endpoint'inde desktop lisans doğrulaması çalışmıyor çünkü Electron uygulamadan gelen JSON request backend tarafından `Gecersiz imza.` ile reddediliyor. UI tarafı çalışıyor; sorun request signature doğrulamasında. Endpoint ham `application/json` body'yi okumalı, `signature` alanını payload'dan çıkarmalı, kalan veriyi `json_encode($payload)` ile aynı sırada encode edip `hash_hmac('sha256', ..., LICENSE_SECRET)` ile doğrulamalı. Ardından `action=activate` ve `action=verify` akışlarını `domain = desktop:<installation_id>` mantığıyla desteklemeli ve response'u da HMAC ile imzalamalı.
+
+Bu düzeltme yapılınca Electron uygulamadaki `Etkinleştir` butonu lisans aktivasyonuna düzgün cevap verecektir.
+
+---
+
+## 18. Desktop uygulamanın ilgili dosyası
+
+Sorun backend'de olsa da desktop uygulamada bu akış şu dosyada uygulanmıştır:
+
+- `electron.js`
+
+Özellikle:
+- request imzası üretimi
+- response imzası doğrulaması
+- `license-activate` IPC handler'ı
+- `desktop:<installation_id>` üretimi
+
+Yani backend tarafı bu sözleşmeye uyacak şekilde düzenlenmelidir.
+
+---
+
+## 19. Son durum özeti
+
+Şu anki gerçek durum:
+
+- desktop uygulama lisans penceresini açıyor
+- kullanıcı lisans anahtarını girebiliyor
+- `Etkinleştir` tıklanınca istek gönderiliyor
+- KaenLabs API isteği alıyor
+- fakat backend `Gecersiz imza.` cevabı döndürüyor
+- bu yüzden aktivasyon tamamlanmıyor
+
+Yani çözülmesi gereken yer artık Electron UI değil, **KaenLabs backend request/response imza uyumu**dur.
