@@ -1,11 +1,17 @@
-const { app, BrowserWindow, dialog, ipcMain } = require('electron');
+const electron = require('electron');
+const app = electron.app;
+const BrowserWindow = electron.BrowserWindow;
+const dialog = electron.dialog;
+const ipcMain = electron.ipcMain;
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const { exec, execSync, spawnSync } = require('child_process');
 const https = require('https');
 
 let mainWindow;
 let splashWindow;
+let licenseWindow;
 let isUpdating = false;
 const appDir = path.dirname(process.execPath).includes('electron')
     ? __dirname
@@ -35,6 +41,11 @@ function getPortableDataDir() {
 
 const DATA_DIR = getPortableDataDir();
 const CHROMIUM_DIR = path.join(DATA_DIR, 'chromium');
+const LICENSE_FILE = path.join(DATA_DIR, 'license.json');
+const LICENSE_VERIFY_URL = 'https://kaenlabs.net/api/verify.php';
+const LICENSE_SECRET = 'K4eN_L4b5_2026_pr0d_s3cur1ty';
+const LICENSE_PRODUCT = 'whatsapp-sender';
+const LICENSE_GRACE_PERIOD_MS = 3 * 24 * 60 * 60 * 1000;
 
 // Windows UTF-8 uyumu: cmd.exe'yi UTF-8 kod sayfasına geçir
 function utf8Cmd(cmd) {
@@ -54,6 +65,358 @@ function getShortPath(p) {
     return p;
 }
 
+function getMachineFingerprint() {
+    return [
+        process.platform,
+        process.arch,
+        process.env.COMPUTERNAME || '',
+        process.env.USERDOMAIN || '',
+        app.getPath('userData') || '',
+        DATA_DIR
+    ].join('|');
+}
+
+function createInstallationId() {
+    return crypto.createHash('sha256')
+        .update(getMachineFingerprint() + '|' + crypto.randomUUID())
+        .digest('hex')
+        .slice(0, 32);
+}
+
+function getLicenseDomain(installationId) {
+    return 'desktop:' + installationId;
+}
+
+function readLicenseFile() {
+    try {
+        if (!fs.existsSync(LICENSE_FILE)) return null;
+        const parsed = JSON.parse(fs.readFileSync(LICENSE_FILE, 'utf8'));
+        return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch (e) {
+        console.log('[License] license.json okunamadı:', e.message);
+        return null;
+    }
+}
+
+function writeLicenseFile(data) {
+    const nextData = {
+        installationId: data.installationId || createInstallationId(),
+        licenseKey: String(data.licenseKey || '').trim(),
+        activatedAt: data.activatedAt || new Date().toISOString(),
+        lastVerifiedAt: data.lastVerifiedAt || null,
+        lastSuccessAt: data.lastSuccessAt || null,
+        lastError: data.lastError || '',
+        status: data.status || 'pending'
+    };
+    fs.writeFileSync(LICENSE_FILE, JSON.stringify(nextData, null, 2), 'utf8');
+    return nextData;
+}
+
+function getOrCreateLicenseState() {
+    const existing = readLicenseFile();
+    if (existing && existing.installationId) {
+        return existing;
+    }
+    return writeLicenseFile({
+        installationId: existing && existing.installationId ? existing.installationId : createInstallationId(),
+        licenseKey: existing && existing.licenseKey ? existing.licenseKey : '',
+        activatedAt: existing && existing.activatedAt ? existing.activatedAt : null,
+        lastVerifiedAt: existing && existing.lastVerifiedAt ? existing.lastVerifiedAt : null,
+        lastSuccessAt: existing && existing.lastSuccessAt ? existing.lastSuccessAt : null,
+        lastError: existing && existing.lastError ? existing.lastError : '',
+        status: existing && existing.status ? existing.status : 'missing'
+    });
+}
+
+function buildLicenseSignature(payload) {
+    return crypto
+        .createHmac('sha256', LICENSE_SECRET)
+        .update(JSON.stringify(payload))
+        .digest('hex');
+}
+
+function verifyLicenseResponse(responseBody) {
+    if (!responseBody || typeof responseBody !== 'object') {
+        throw new Error('Geçersiz lisans yanıtı');
+    }
+    const received = String(responseBody.signature || '').trim();
+    if (!received) {
+        throw new Error('Lisans yanıt imzası eksik');
+    }
+    const payload = { ...responseBody };
+    delete payload.signature;
+    const expected = buildLicenseSignature(payload);
+    if (received !== expected) {
+        throw new Error('Lisans yanıt imzası doğrulanamadı');
+    }
+    return payload;
+}
+
+function requestJson(url, payload) {
+    return new Promise((resolve, reject) => {
+        const body = JSON.stringify(payload);
+        const request = https.request(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(body)
+            },
+            timeout: 15000
+        }, (response) => {
+            let responseText = '';
+            response.on('data', (chunk) => {
+                responseText += chunk;
+            });
+            response.on('end', () => {
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    return reject(new Error('HTTP ' + response.statusCode));
+                }
+                try {
+                    resolve(JSON.parse(responseText));
+                } catch (e) {
+                    reject(new Error('Lisans sunucusu geçersiz JSON döndürdü'));
+                }
+            });
+        });
+        request.on('error', reject);
+        request.on('timeout', () => request.destroy(new Error('Lisans sunucusu zaman aşımına uğradı')));
+        request.write(body);
+        request.end();
+    });
+}
+
+async function verifyLicenseWithServer(licenseKey, installationId, action) {
+    const payload = {
+        license_key: String(licenseKey || '').trim(),
+        domain: getLicenseDomain(installationId),
+        product: LICENSE_PRODUCT,
+        action: action || 'verify',
+        server_ip: '',
+        timestamp: Math.floor(Date.now() / 1000)
+    };
+    const response = await requestJson(LICENSE_VERIFY_URL, {
+        ...payload,
+        signature: buildLicenseSignature(payload)
+    });
+    const verified = verifyLicenseResponse(response);
+    const success = !!(verified.valid || verified.success || verified.status === 'valid' || verified.status === 'active');
+    return {
+        ok: success,
+        message: verified.message || (success ? 'Lisans doğrulandı' : 'Lisans doğrulanamadı'),
+        data: verified
+    };
+}
+
+function canUseGracePeriod(licenseState) {
+    if (!licenseState || !licenseState.lastSuccessAt) return false;
+    const lastSuccess = new Date(licenseState.lastSuccessAt).getTime();
+    if (!lastSuccess || Number.isNaN(lastSuccess)) return false;
+    return Date.now() - lastSuccess <= LICENSE_GRACE_PERIOD_MS;
+}
+
+function createLicenseWindow() {
+    licenseWindow = new BrowserWindow({
+        width: 520,
+        height: 560,
+        resizable: false,
+        maximizable: false,
+        minimizable: false,
+        autoHideMenuBar: true,
+        show: false,
+        backgroundColor: '#080810',
+        webPreferences: {
+            nodeIntegration: true,
+            contextIsolation: false
+        }
+    });
+
+    const licenseHtml = `<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Segoe UI',sans-serif;background:linear-gradient(180deg,#06070f,#0b1020);color:#eef2ff;padding:24px;display:flex;min-height:100vh;align-items:center;justify-content:center;}
+.card{width:100%;background:linear-gradient(180deg,rgba(13,16,31,0.98),rgba(10,13,27,0.98));border:1px solid rgba(139,92,246,0.25);border-radius:20px;padding:26px;box-shadow:0 24px 90px rgba(0,0,0,0.45);}
+.badge{display:inline-block;padding:7px 12px;border-radius:999px;background:rgba(139,92,246,0.16);border:1px solid rgba(167,139,250,0.22);color:#ede9fe;font-size:12px;font-weight:800;margin-bottom:14px;}
+h1{font-size:24px;color:#f8fbff;margin-bottom:8px;}
+.sub{font-size:13px;color:#aeb8d3;line-height:1.6;margin-bottom:20px;}
+label{display:block;font-size:12px;font-weight:700;margin-bottom:8px;color:#dbe4ff;}
+input{width:100%;padding:14px 15px;border-radius:12px;border:1px solid rgba(139,92,246,0.22);background:#0f1428;color:#fff;font-size:14px;outline:none;}
+input:focus{border-color:#8b5cf6;box-shadow:0 0 0 3px rgba(139,92,246,0.14);}
+.hint{margin-top:10px;font-size:11px;color:#7f8aa6;line-height:1.5;}
+.meta{margin-top:14px;padding:12px 14px;border-radius:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.05);font-size:12px;color:#cbd5e1;line-height:1.6;}
+.status{margin-top:14px;min-height:44px;padding:12px 14px;border-radius:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);font-size:13px;line-height:1.5;color:#dbe4ff;white-space:pre-line;}
+.status.ok{border-color:rgba(34,197,94,0.30);color:#bbf7d0;background:rgba(34,197,94,0.10);}
+.status.err{border-color:rgba(239,68,68,0.30);color:#fecaca;background:rgba(239,68,68,0.10);}
+.actions{display:flex;gap:10px;margin-top:18px;}
+button{flex:1;padding:12px 14px;border:none;border-radius:12px;font-size:13px;font-weight:800;cursor:pointer;transition:opacity .2s ease;}
+button:hover{opacity:.9;}
+button:disabled{opacity:.5;cursor:not-allowed;}
+.primary{background:linear-gradient(135deg,#7c3aed,#a78bfa);color:#fff;}
+.ghost{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);color:#cbd5e1;}
+</style></head>
+<body>
+<div class="card">
+    <span class="badge">WhatsApp Sender Lisans</span>
+    <h1>Lisans anahtarınızı girin</h1>
+    <div class="sub">Uygulama açılmadan önce lisans sunucusuyla doğrulama yapılır. Güncellemelerde lisans bilgisi bu cihaza kalıcı olarak bağlı kalır.</div>
+    <label for="license-key">Lisans anahtarı</label>
+    <input id="license-key" placeholder="XXXX-XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false">
+    <div class="hint">Bu kurulum kimliği yalnızca bu uygulama kurulumu için kullanılır ve güncellemede korunur.</div>
+    <div class="meta" id="install-meta">Kurulum hazırlanıyor...</div>
+    <div class="status" id="license-status">Lütfen lisans anahtarınızı girin.</div>
+    <div class="actions">
+        <button class="ghost" onclick="require('electron').ipcRenderer.send('license-cancel')">Kapat</button>
+        <button class="primary" id="activate-btn" onclick="activateLicense()">Etkinleştir</button>
+    </div>
+</div>
+<script>
+const { ipcRenderer } = require('electron');
+const statusEl = document.getElementById('license-status');
+const keyEl = document.getElementById('license-key');
+const btnEl = document.getElementById('activate-btn');
+const metaEl = document.getElementById('install-meta');
+
+function setStatus(message, type) {
+    statusEl.textContent = message;
+    statusEl.className = 'status' + (type ? ' ' + type : '');
+}
+
+function activateLicense() {
+    const licenseKey = keyEl.value.trim();
+    if (!licenseKey) {
+        setStatus('Lisans anahtarı boş olamaz.', 'err');
+        keyEl.focus();
+        return;
+    }
+    btnEl.disabled = true;
+    setStatus('Lisans doğrulanıyor, lütfen bekleyin...');
+    ipcRenderer.invoke('license-activate', { licenseKey }).then((result) => {
+        btnEl.disabled = false;
+        if (result && result.ok) {
+            setStatus(result.message || 'Lisans doğrulandı. Uygulama açılıyor...', 'ok');
+            return;
+        }
+        setStatus(result && result.message ? result.message : 'Lisans doğrulanamadı.', 'err');
+    }).catch((err) => {
+        btnEl.disabled = false;
+        setStatus(err && err.message ? err.message : 'Bilinmeyen lisans hatası.', 'err');
+    });
+}
+
+ipcRenderer.on('license-state', (_event, payload) => {
+    const state = payload || {};
+    metaEl.textContent = 'Kurulum Kimliği: ' + (state.installationId || '-') + '\nBağlama: ' + (state.domain || '-');
+    if (state.licenseKey) keyEl.value = state.licenseKey;
+    if (state.message) setStatus(state.message, state.ok ? 'ok' : (state.type || ''));
+});
+
+keyEl.addEventListener('keydown', function(event) {
+    if (event.key === 'Enter') activateLicense();
+});
+</script>
+</body></html>`;
+
+    licenseWindow.on('closed', () => {
+        licenseWindow = null;
+    });
+    licenseWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(licenseHtml));
+    return licenseWindow;
+}
+
+function showSplashWindow() {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+        splashWindow.show();
+        splashWindow.focus();
+    }
+}
+
+function hideLicenseWindow() {
+    if (licenseWindow && !licenseWindow.isDestroyed()) {
+        licenseWindow.close();
+    }
+    licenseWindow = null;
+}
+
+function showLicenseWindow(state, message, type) {
+    if (!licenseWindow || licenseWindow.isDestroyed()) {
+        createLicenseWindow();
+    }
+    if (splashWindow && !splashWindow.isDestroyed()) {
+        splashWindow.hide();
+    }
+    const currentState = state || getOrCreateLicenseState();
+    const payload = {
+        installationId: currentState.installationId,
+        domain: getLicenseDomain(currentState.installationId),
+        licenseKey: currentState.licenseKey || '',
+        ok: type === 'ok',
+        type: type || '',
+        message: message || (currentState.licenseKey ? 'Lisans doğrulaması gerekiyor.' : 'Lütfen lisans anahtarınızı girin.')
+    };
+    const sendState = () => {
+        licenseWindow?.webContents?.send('license-state', payload);
+    };
+    if (licenseWindow.webContents.isLoading()) {
+        licenseWindow.webContents.once('did-finish-load', sendState);
+    } else {
+        sendState();
+    }
+    licenseWindow.show();
+    licenseWindow.focus();
+}
+
+async function ensureLicenseIsValid() {
+    const state = getOrCreateLicenseState();
+    if (!state.licenseKey) {
+        showLicenseWindow(state, 'Lisans bulunamadı. Devam etmek için lisans anahtarınızı girin.');
+        return false;
+    }
+    try {
+        const result = await verifyLicenseWithServer(state.licenseKey, state.installationId, 'verify');
+        if (!result.ok) {
+            writeLicenseFile({
+                ...state,
+                lastVerifiedAt: new Date().toISOString(),
+                lastError: result.message,
+                status: 'invalid'
+            });
+            showLicenseWindow({ ...state, status: 'invalid' }, result.message || 'Lisans doğrulanamadı.', 'err');
+            return false;
+        }
+        writeLicenseFile({
+            ...state,
+            licenseKey: state.licenseKey,
+            lastVerifiedAt: new Date().toISOString(),
+            lastSuccessAt: new Date().toISOString(),
+            lastError: '',
+            status: 'active'
+        });
+        hideLicenseWindow();
+        return true;
+    } catch (err) {
+        if (canUseGracePeriod(state)) {
+            console.log('[License] Sunucuya ulaşılamadı, grace period ile devam ediliyor:', err.message);
+            return true;
+        }
+        writeLicenseFile({
+            ...state,
+            lastVerifiedAt: new Date().toISOString(),
+            lastError: err.message || String(err),
+            status: 'offline'
+        });
+        showLicenseWindow(state, 'Lisans sunucusuna ulaşılamadı. İnternet bağlantınızı kontrol edip tekrar deneyin.\n\nDetay: ' + (err.message || String(err)), 'err');
+        return false;
+    }
+}
+
+async function openLicensedApp() {
+    const allowed = await ensureLicenseIsValid();
+    if (!allowed) return;
+    showSplashWindow();
+    runChecks();
+}
+
+
 // ─── Splash Screen (gereksinim kontrolü) ────────────────────────────────────
 
 function createSplashWindow() {
@@ -65,6 +428,7 @@ function createSplashWindow() {
         transparent: true,
         alwaysOnTop: true,
         backgroundColor: '#00000000',
+        show: false,
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false
@@ -159,6 +523,7 @@ ipcRenderer.on('update-info', (e, msg) => {
 </body></html>`;
 
     splashWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(splashHtml));
+    return splashWindow;
 }
 
 // ─── Chromium kalıcı dizinde arama ──────────────────────────────────────────
@@ -391,6 +756,9 @@ function downloadFile(url, dest, onProgress) {
 // ─── Eksik bağımlılıkları yükle ────────────────────────────────────────────
 
 async function installDependencies() {
+    if (splashWindow && !splashWindow.isDestroyed() && !splashWindow.isVisible()) {
+        splashWindow.show();
+    }
     splashWindow.webContents.send('installing');
 
     try {
@@ -605,11 +973,61 @@ ipcMain.on('splash-install', () => {
     installDependencies();
 });
 
+ipcMain.on('license-cancel', () => {
+    app.quit();
+});
+
+ipcMain.handle('license-activate', async (_event, payload) => {
+    const licenseKey = String(payload && payload.licenseKey ? payload.licenseKey : '').trim();
+    if (!licenseKey) {
+        return { ok: false, message: 'Lisans anahtarı boş olamaz.' };
+    }
+
+    const currentState = getOrCreateLicenseState();
+    try {
+        const result = await verifyLicenseWithServer(licenseKey, currentState.installationId, 'activate');
+        if (!result.ok) {
+            writeLicenseFile({
+                ...currentState,
+                licenseKey,
+                lastVerifiedAt: new Date().toISOString(),
+                lastError: result.message,
+                status: 'invalid'
+            });
+            return { ok: false, message: result.message || 'Lisans etkinleştirilemedi.' };
+        }
+
+        writeLicenseFile({
+            ...currentState,
+            licenseKey,
+            activatedAt: currentState.activatedAt || new Date().toISOString(),
+            lastVerifiedAt: new Date().toISOString(),
+            lastSuccessAt: new Date().toISOString(),
+            lastError: '',
+            status: 'active'
+        });
+
+        hideLicenseWindow();
+        showSplashWindow();
+        runChecks();
+        return { ok: true, message: result.message || 'Lisans doğrulandı. Uygulama açılıyor...' };
+    } catch (err) {
+        writeLicenseFile({
+            ...currentState,
+            licenseKey,
+            lastVerifiedAt: new Date().toISOString(),
+            lastError: err.message || String(err),
+            status: 'offline'
+        });
+        return { ok: false, message: err.message || 'Lisans sunucusuna ulaşılamadı.' };
+    }
+});
+
 // ─── App lifecycle ──────────────────────────────────────────────────────────
 
 app.whenReady().then(() => {
     createSplashWindow();
-    runChecks();
+    openLicensedApp();
 });
 
 app.on('window-all-closed', () => {

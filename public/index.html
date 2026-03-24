@@ -1212,7 +1212,7 @@
 <body>
 <div id="app-intro" class="app-intro">
     <div class="app-intro-card">
-        <span class="app-intro-badge">⚡ WhatsApp Sender v2.3.8</span>
+        <span class="app-intro-badge">⚡ WhatsApp Sender v3.0.3</span>
         <div class="app-intro-loader"></div>
         <div class="app-intro-title">Çalışma alanı hazırlanıyor</div>
         <div class="app-intro-subtitle">Hesaplar, sohbetler, gönderim akışı ve canlı reply merkezi yükleniyor. Birkaç saniye içinde uygulama hazır.</div>
@@ -1238,7 +1238,7 @@
         </div>
     </div>
     <div class="header-actions">
-        <span class="theme-pill">v2.3.6</span>
+        <span class="theme-pill">v3.0.3</span>
         <div class="header-kpi">
             <strong class="rgb-text">Live</strong>
             <span>Takip modu</span>
@@ -1600,6 +1600,11 @@ var replySendInProgress = false;
 var replyChatStatusMessage = '';
 var activeTab = 'log';
 var startupIntroHidden = false;
+var pendingSentLogRender = false;
+var pendingRepliesRender = false;
+var MAX_UI_LOG_LINES = 300;
+var MAX_UI_SENT_ITEMS = 300;
+var MAX_UI_REPLY_CONVERSATIONS = 200;
 
 // ── Tabs ────────────────────────────────────────────────
 function switchTab(name) {
@@ -1610,7 +1615,11 @@ function switchTab(name) {
     var tabs = document.querySelectorAll('.tab');
     var map = { log: 0, sent: 1, replies: 2, notes: 3, proxy: 4 };
     if (map[name] !== undefined) tabs[map[name]].classList.add('active');
-    if (name === 'replies') markRepliesViewed();
+    if (name === 'sent') renderSentLog();
+    if (name === 'replies') {
+        markRepliesViewed();
+        renderReplies();
+    }
 }
 
 // ── Socket Events ───────────────────────────────────────
@@ -1706,8 +1715,13 @@ socket.on('send-stopped', function(d) {
     log('Durduruldu \u2014 ' + d.index + '/' + d.total, 'warn');
 });
 socket.on('sent-log-update', function(data) {
-    sentLogData = data;
-    renderSentLog();
+    sentLogData = Array.isArray(data) ? data : [];
+    if (pendingSentLogRender) return;
+    pendingSentLogRender = true;
+    requestAnimationFrame(function() {
+        pendingSentLogRender = false;
+        if (activeTab === 'sent') renderSentLog();
+    });
 });
 socket.on('reply-received', function(r) {
     restoreReplyConversationIfNeeded(r);
@@ -1715,7 +1729,13 @@ socket.on('reply-received', function(r) {
     upsertReplyItem(r);
     maybeIncrementReplyUnread(r);
     maybePlayReplyEffects(r);
-    renderReplies();
+    if (!pendingRepliesRender) {
+        pendingRepliesRender = true;
+        requestAnimationFrame(function() {
+            pendingRepliesRender = false;
+            if (activeTab === 'replies') renderReplies();
+        });
+    }
     if (selectedReplyKey && resolveReplyKey(r) === selectedReplyKey) {
         loadReplyHistory(selectedReplyConversation || r, { silent: true, force: true });
     }
@@ -2368,16 +2388,17 @@ function getSentReasonText(item) {
 function renderSentLog() {
     var el = document.getElementById('sent-list');
     var filtered = getFilteredSentLog();
+    var visibleItems = filtered.slice(-MAX_UI_SENT_ITEMS);
     var okCount = filtered.filter(function(s){return s.status === 'ba\u015Far\u0131l\u0131'}).length;
     var errCount = filtered.filter(function(s){return s.status === 'hata'}).length;
     document.getElementById('sent-total').textContent = filtered.length;
     document.getElementById('sent-ok').textContent = okCount;
     document.getElementById('sent-err').textContent = errCount;
-    if (!filtered.length) {
+    if (!visibleItems.length) {
         el.innerHTML = '<div class="empty" style="padding:12px"><div class="empty-icon">\u{1F4E8}</div>Se\u00E7ilen filtre i\u00E7in kay\u0131t bulunamad\u0131</div>';
         return;
     }
-    el.innerHTML = filtered.slice().reverse().map(function(s) {
+    el.innerHTML = visibleItems.slice().reverse().map(function(s) {
         var d = new Date(s.date);
         var t = d.toLocaleDateString('tr-TR') + ' ' + d.toLocaleTimeString('tr-TR');
         var cls = getSentStatusClass(s.status);
@@ -2406,6 +2427,27 @@ function sendClientLog(level, message, extra) {
     }).catch(function() {});
 }
 
+window.onerror = function(message, source, lineno, colno, error) {
+    sendClientLog('error', 'window-error', {
+        message: String(message || ''),
+        source: String(source || ''),
+        line: lineno || 0,
+        column: colno || 0,
+        stack: error && error.stack ? String(error.stack).slice(0, 1000) : ''
+    });
+    log('Arayüz hatası: ' + String(message || 'Bilinmeyen hata'), 'err');
+};
+
+window.addEventListener('unhandledrejection', function(event) {
+    var reason = event && event.reason;
+    var message = reason && reason.message ? reason.message : String(reason || 'Bilinmeyen promise hatası');
+    sendClientLog('error', 'unhandled-rejection', {
+        message: message,
+        stack: reason && reason.stack ? String(reason.stack).slice(0, 1000) : ''
+    });
+    log('Arka plan hatası: ' + message, 'err');
+});
+
 function primeReplyAudio() {
     ensureReplyAudio();
 }
@@ -2414,11 +2456,17 @@ function log(text, cls) {
     sendClientLog('info', 'ui-log', { text: text, cls: cls || '' });
     var el = document.getElementById('log');
     var t = new Date().toLocaleTimeString('tr-TR');
+    var shouldStickToBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
     var div = document.createElement('div');
     div.className = 'le ' + (cls || '');
     div.textContent = '[' + t + '] ' + text;
     el.appendChild(div);
-    el.scrollTop = el.scrollHeight;
+    while (el.childNodes.length > MAX_UI_LOG_LINES) {
+        el.removeChild(el.firstChild);
+    }
+    if (shouldStickToBottom || activeTab === 'log') {
+        el.scrollTop = el.scrollHeight;
+    }
 }
 
 function clearLog() {
@@ -2456,9 +2504,11 @@ document.getElementById('note-input').addEventListener('keypress', function(e) {
 
 // ── Sent Log ────────────────────────────────────────────
 function loadSentLog() {
-    fetch('/api/sent-log').then(function(r){return r.json()}).then(function(data) {
-        sentLogData = data;
+    fetch('/api/sent-log').then(safeJson).then(function(data) {
+        sentLogData = Array.isArray(data) ? data : [];
         renderSentLog();
+    }).catch(function(err) {
+        document.getElementById('sent-list').innerHTML = '<div class="empty" style="padding:12px"><div class="empty-icon">\u{1F4E8}</div>' + esc(err.message || 'Gönderim kayıtları yüklenemedi') + '</div>';
     });
 }
 
@@ -3296,6 +3346,9 @@ function renderReplies() {
     if (!replyConversations.length && repliesData.length) {
         replyConversations = buildReplyConversationsFromItems();
     }
+    if (replyConversations.length > MAX_UI_REPLY_CONVERSATIONS) {
+        replyConversations = replyConversations.slice(0, MAX_UI_REPLY_CONVERSATIONS);
+    }
     var totalReplies = repliesData.length;
     document.getElementById('replies-total').textContent = totalReplies;
     document.getElementById('replies-conversation-count').textContent = replyConversations.length + ' sohbet';
@@ -3364,7 +3417,7 @@ function renderReplyDetail() {
     hintEl.textContent = replySendInProgress ? 'Mesaj gönderiliyor...' : (isReplyMuted(selectedReplyConversation) ? 'Bu konuşma sessizde. Yeni reply bildirimleri bastırılır.' : 'Son 5 karşılıklı mesaj gösterilir.');
     statusEl.textContent = replyChatStatusMessage || (replyHistoryLoading ? 'Mesaj geçmişi yükleniyor...' : '');
 
-    var history = replyHistoryCache[selectedReplyKey] || [];
+    var history = (replyHistoryCache[selectedReplyKey] || []).slice(-5);
     if (!history.length) {
         messagesEl.innerHTML = '<div class="reply-detail-empty"><div><div class="empty-icon">🕓</div>Mesaj geçmişi yükleniyor veya henüz bulunamadı.</div></div>';
         return;
