@@ -347,6 +347,13 @@ function showSplashWindow() {
     if (splashWindow && !splashWindow.isDestroyed()) {
         splashWindow.show();
         splashWindow.focus();
+        splashWindow.setAlwaysOnTop(true, 'screen-saver');
+        splashWindow.moveTop();
+        setTimeout(() => {
+            if (splashWindow && !splashWindow.isDestroyed()) {
+                splashWindow.setAlwaysOnTop(false);
+            }
+        }, 1200);
     }
 }
 
@@ -923,6 +930,12 @@ function checkForUpdates() {
 // ─── Ana uygulamayı başlat ──────────────────────────────────────────────────
 
 function launchApp() {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.show();
+        mainWindow.focus();
+        return;
+    }
+
     // Chrome path'i varsa ortam değişkenine ata (whatsapp-web.js Puppeteer'a iletilir)
     if (!process.env.PUPPETEER_EXECUTABLE_PATH) {
         const chromePath = getChromePath();
@@ -951,19 +964,71 @@ function launchApp() {
         title: 'WhatsApp Mesaj Göndericisi',
         autoHideMenuBar: true,
         backgroundColor: '#080810',
+        show: false,
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true
         }
     });
 
-    setTimeout(() => {
-        mainWindow.loadURL('http://localhost:3000');
+    mainWindow.once('ready-to-show', () => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        mainWindow.show();
+        mainWindow.focus();
         if (splashWindow && !splashWindow.isDestroyed()) {
             splashWindow.close();
             splashWindow = null;
         }
-    }, 2000);
+    });
+
+    setTimeout(() => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        mainWindow.loadURL('http://localhost:3000');
+    }, 200);
+
+    setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+            mainWindow.show();
+            mainWindow.focus();
+        }
+        if (splashWindow && !splashWindow.isDestroyed()) {
+            splashWindow.close();
+            splashWindow = null;
+        }
+    }, 4000);
+
+    mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+        if (splashWindow && !splashWindow.isDestroyed()) {
+            splashWindow.webContents.send('install-error', 'Arayüz yüklenemedi: ' + errorDescription + ' (' + errorCode + ')');
+            splashWindow.show();
+            splashWindow.focus();
+        }
+    });
+
+    mainWindow.webContents.on('did-finish-load', () => {
+        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+            mainWindow.show();
+            mainWindow.focus();
+        }
+    });
+
+    mainWindow.webContents.on('render-process-gone', (_event, details) => {
+        if (splashWindow && !splashWindow.isDestroyed()) {
+            splashWindow.webContents.send('install-error', 'Arayüz çöktü: ' + (details && details.reason ? details.reason : 'bilinmeyen hata'));
+            splashWindow.show();
+            splashWindow.focus();
+        }
+    });
+
+    mainWindow.webContents.on('unresponsive', () => {
+        if (splashWindow && !splashWindow.isDestroyed()) {
+            splashWindow.webContents.send('install-error', 'Arayüz yanıt vermiyor.');
+            splashWindow.show();
+            splashWindow.focus();
+        }
+    });
+
+    mainWindow.loadURL('http://localhost:3000');
 
     mainWindow.on('close', (e) => {
         if (isUpdating) return; // Güncelleme kuruluyorsa doğrudan kapat
@@ -1000,6 +1065,9 @@ ipcMain.on('license-cancel', () => {
 
 ipcMain.on('license-activation-complete', () => {
     hideLicenseWindow();
+    if (app.isReady()) {
+        app.focus({ steal: true });
+    }
     showSplashWindow();
     runChecks();
 });
