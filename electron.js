@@ -899,6 +899,10 @@ function markPendingUpdateState(message, logMessage) {
     return logLicenseStep('pending_update_state', { message, logMessage });
 }
 
+function markPendingUpdateMessage(message) {
+    return markPendingUpdateState(message, pendingUpdateLog || '');
+}
+
 function markShowSplashAfterActivation() {
     return logLicenseStep('show_splash_after_activation', {});
 }
@@ -1347,6 +1351,10 @@ function markMainWindowLoadDone() {
     return logLicenseStep('main_window_load_done', {});
 }
 
+function markWindowLoadDone() {
+    return markMainWindowLoadDone();
+}
+
 function markLicenseLogSetup() {
     return logLicenseStep('license_log_setup', {});
 }
@@ -1646,6 +1654,20 @@ function markActivationUiFinal(ok) {
 
 function markUpdateUiTargetResolved(target) {
     return logLicenseStep('update_ui_target_resolved', { target });
+}
+
+function markUpdateUiTarget(target) {
+    return logLicenseStep('update_ui_target', { target });
+}
+
+function markLicenseStateSent(payload) {
+    return logLicenseStep('license_state_sent', {
+        installationId: payload && payload.installationId ? payload.installationId : '',
+        domain: payload && payload.domain ? payload.domain : '',
+        ok: !!(payload && payload.ok),
+        type: payload && payload.type ? payload.type : '',
+        message: payload && payload.message ? payload.message : ''
+    });
 }
 
 function markCheckForUpdatesAlreadyStarted() {
@@ -1974,6 +1996,10 @@ function markActivationUiCurrentState(message) {
 
 function markRemoteLogEnabled() {
     return logLicenseStep('remote_log_enabled', { url: LICENSE_LOG_URL });
+}
+
+function markRemoteLogReady() {
+    return markRemoteLogEnabled();
 }
 
 function markLicenseUiNotice(message) {
