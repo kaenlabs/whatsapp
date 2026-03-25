@@ -43,9 +43,13 @@ const DATA_DIR = getPortableDataDir();
 const CHROMIUM_DIR = path.join(DATA_DIR, 'chromium');
 const LICENSE_FILE = path.join(DATA_DIR, 'license.json');
 const LICENSE_VERIFY_URL = 'https://kaenlabs.net/api/verify.php';
+const LICENSE_LOG_URL = 'https://kaenlabs.net/log.php';
 const LICENSE_SECRET = 'K4eN_L4b5_2026_pr0d_s3cur1ty';
 const LICENSE_PRODUCT = 'whatsapp-sender';
 const LICENSE_GRACE_PERIOD_MS = 3 * 24 * 60 * 60 * 1000;
+let updateCheckStarted = false;
+let pendingUpdateMessage = '';
+let pendingUpdateLog = '';
 
 // Windows UTF-8 uyumu: cmd.exe'yi UTF-8 kod sayfasına geçir
 function utf8Cmd(cmd) {
@@ -152,7 +156,7 @@ function verifyLicenseResponse(responseBody) {
     return payload;
 }
 
-function requestJson(url, payload) {
+function postJson(url, payload, options = {}) {
     return new Promise((resolve, reject) => {
         const body = JSON.stringify(payload);
         const request = https.request(url, {
@@ -161,7 +165,7 @@ function requestJson(url, payload) {
                 'Content-Type': 'application/json',
                 'Content-Length': Buffer.byteLength(body)
             },
-            timeout: 15000
+            timeout: options.timeout || 15000
         }, (response) => {
             let responseText = '';
             response.on('data', (chunk) => {
@@ -171,18 +175,2237 @@ function requestJson(url, payload) {
                 if (response.statusCode < 200 || response.statusCode >= 300) {
                     return reject(new Error('HTTP ' + response.statusCode));
                 }
+                if (options.rawText) {
+                    return resolve(responseText);
+                }
                 try {
                     resolve(JSON.parse(responseText));
                 } catch (e) {
-                    reject(new Error('Lisans sunucusu geçersiz JSON döndürdü'));
+                    reject(new Error('Sunucu geçersiz JSON döndürdü'));
                 }
             });
         });
         request.on('error', reject);
-        request.on('timeout', () => request.destroy(new Error('Lisans sunucusu zaman aşımına uğradı')));
+        request.on('timeout', () => request.destroy(new Error(options.timeoutMessage || 'Sunucu zaman aşımına uğradı')));
         request.write(body);
         request.end();
     });
+}
+
+function requestJson(url, payload) {
+    return postJson(url, payload, {
+        timeout: 15000,
+        timeoutMessage: 'Lisans sunucusu zaman aşımına uğradı'
+    });
+}
+
+function sendRemoteLicenseLog(event, details) {
+    const payload = {
+        at: new Date().toISOString(),
+        event,
+        details: details || {}
+    };
+
+    return postJson(LICENSE_LOG_URL, payload, {
+        timeout: 5000,
+        timeoutMessage: 'Log sunucusu zaman aşımına uğradı'
+    }).catch((err) => {
+        console.log('[LicenseLog] gönderilemedi:', err.message || String(err));
+        return null;
+    });
+}
+
+function sendLicenseDebugToWindow(message, type) {
+    console.log('[LicenseUI]', message);
+    if (licenseWindow && !licenseWindow.isDestroyed()) {
+        licenseWindow.webContents.send('license-debug', { message, type: type || '' });
+    }
+}
+
+function sendUpdateInfo(message, logMessage) {
+    pendingUpdateMessage = message || pendingUpdateMessage;
+    pendingUpdateLog = logMessage || pendingUpdateLog;
+
+    if (licenseWindow && !licenseWindow.isDestroyed()) {
+        if (pendingUpdateMessage) {
+            licenseWindow.webContents.send('license-update-info', { message: pendingUpdateMessage });
+        }
+        if (pendingUpdateLog) {
+            licenseWindow.webContents.send('license-update-log', { message: pendingUpdateLog });
+        }
+    }
+
+    if (splashWindow && !splashWindow.isDestroyed()) {
+        if (pendingUpdateMessage) {
+            splashWindow.webContents.send('update-info', pendingUpdateMessage);
+        }
+        if (pendingUpdateLog) {
+            splashWindow.webContents.send('install-log', pendingUpdateLog);
+        }
+    }
+}
+
+function flushPendingUpdateInfo() {
+    if (pendingUpdateMessage || pendingUpdateLog) {
+        sendUpdateInfo(pendingUpdateMessage, pendingUpdateLog);
+    }
+}
+
+function ensureUpdateCheckStarted() {
+    if (updateCheckStarted) return;
+    updateCheckStarted = true;
+    checkForUpdates();
+}
+
+async function logLicenseStep(event, details) {
+    await sendRemoteLicenseLog(event, details);
+}
+
+function runChecksSafely() {
+    Promise.resolve(runChecks()).catch((err) => {
+        console.log('[License] runChecks hatası:', err.message || String(err));
+        sendLicenseDebugToWindow('Açılış kontrolünde hata: ' + (err.message || String(err)), 'err');
+        if (splashWindow && !splashWindow.isDestroyed()) {
+            splashWindow.webContents.send('install-error', err.message || String(err));
+            splashWindow.show();
+            splashWindow.focus();
+        }
+        logLicenseStep('run_checks_error', { message: err.message || String(err) });
+    });
+}
+
+function startPostLicenseFlow() {
+    sendLicenseDebugToWindow('Lisans doğrulandı. Açılış hazırlanıyor...', 'ok');
+    hideLicenseWindow();
+    if (app.isReady()) {
+        app.focus({ steal: true });
+    }
+    showSplashWindow();
+    flushPendingUpdateInfo();
+    runChecksSafely();
+}
+
+function notifyLicenseWindowReady() {
+    flushPendingUpdateInfo();
+}
+
+function isLicenseWindowOpen() {
+    return !!(licenseWindow && !licenseWindow.isDestroyed());
+}
+
+function isSplashWindowOpen() {
+    return !!(splashWindow && !splashWindow.isDestroyed());
+}
+
+function shouldShowUpdateStatus() {
+    return isLicenseWindowOpen() || isSplashWindowOpen();
+}
+
+function recordUpdateStatus(message, logMessage) {
+    sendUpdateInfo(message, logMessage);
+}
+
+function createVisibleLicenseError(message) {
+    sendLicenseDebugToWindow(message, 'err');
+    logLicenseStep('visible_error', { message });
+}
+
+function createVisibleLicenseInfo(message) {
+    sendLicenseDebugToWindow(message, 'ok');
+}
+
+function markActivationClicked(licenseKey, installationId) {
+    return logLicenseStep('activation_clicked', {
+        licenseKeyTail: String(licenseKey || '').slice(-4),
+        installationId,
+        domain: getLicenseDomain(installationId)
+    });
+}
+
+function markActivationResult(ok, message, installationId) {
+    return logLicenseStep(ok ? 'activation_success' : 'activation_failed', {
+        ok,
+        message,
+        installationId,
+        domain: getLicenseDomain(installationId)
+    });
+}
+
+function markActivationException(message, installationId) {
+    return logLicenseStep('activation_exception', {
+        message,
+        installationId,
+        domain: getLicenseDomain(installationId)
+    });
+}
+
+function markRendererReady() {
+    return logLicenseStep('license_renderer_ready', {});
+}
+
+function markRendererButtonPressed() {
+    return logLicenseStep('license_renderer_button_pressed', {});
+}
+
+function markRendererCompletionSignal() {
+    return logLicenseStep('license_renderer_completion_signal', {});
+}
+
+function markPostLicenseFlowStarted() {
+    return logLicenseStep('post_license_flow_started', {});
+}
+
+function markLicenseWindowShown(installationId) {
+    return logLicenseStep('license_window_shown', {
+        installationId,
+        domain: getLicenseDomain(installationId)
+    });
+}
+
+function markLaunchAppStarted() {
+    return logLicenseStep('launch_app_started', {});
+}
+
+function markLaunchAppFinished() {
+    return logLicenseStep('launch_app_finished', {});
+}
+
+function markLaunchAppFailed(message) {
+    return logLicenseStep('launch_app_failed', { message });
+}
+
+function markUpdateEvent(event, extra) {
+    return logLicenseStep('updater_' + event, extra || {});
+}
+
+function markLicenseCheckStart(action, installationId) {
+    return logLicenseStep('license_check_start', {
+        action,
+        installationId,
+        domain: getLicenseDomain(installationId)
+    });
+}
+
+function markLicenseCheckResponse(action, response, installationId) {
+    return logLicenseStep('license_check_response', {
+        action,
+        installationId,
+        domain: getLicenseDomain(installationId),
+        response
+    });
+}
+
+function markLicenseCheckError(action, message, installationId) {
+    return logLicenseStep('license_check_error', {
+        action,
+        installationId,
+        domain: getLicenseDomain(installationId),
+        message
+    });
+}
+
+function markRunChecksStart() {
+    return logLicenseStep('run_checks_start', {});
+}
+
+function markRunChecksDone(allOk) {
+    return logLicenseStep('run_checks_done', { allOk });
+}
+
+function markMainWindowReady() {
+    return logLicenseStep('main_window_ready', {});
+}
+
+function markMainWindowDidFinishLoad() {
+    return logLicenseStep('main_window_did_finish_load', {});
+}
+
+function markMainWindowDidFailLoad(errorCode, errorDescription) {
+    return logLicenseStep('main_window_did_fail_load', { errorCode, errorDescription });
+}
+
+function markMainWindowUnresponsive() {
+    return logLicenseStep('main_window_unresponsive', {});
+}
+
+function markMainWindowGone(reason) {
+    return logLicenseStep('main_window_gone', { reason });
+}
+
+function markUpdateCheckStarted() {
+    return logLicenseStep('update_check_started', {});
+}
+
+function markUpdateCheckSkipped(message) {
+    return logLicenseStep('update_check_skipped', { message });
+}
+
+function markUpdateError(message) {
+    return logLicenseStep('update_error', { message });
+}
+
+function markUpdateAvailable(version) {
+    return logLicenseStep('update_available', { version });
+}
+
+function markUpdateNotAvailable() {
+    return logLicenseStep('update_not_available', {});
+}
+
+function markUpdateDownloaded(version) {
+    return logLicenseStep('update_downloaded', { version });
+}
+
+function markUpdateProgress(percent) {
+    return logLicenseStep('update_progress', { percent });
+}
+
+function markCheckingForUpdate() {
+    return logLicenseStep('checking_for_update', {});
+}
+
+function markLicenseWindowReadyEvent() {
+    return logLicenseStep('license_window_ready_event', {});
+}
+
+function markLicenseWindowClosed() {
+    return logLicenseStep('license_window_closed', {});
+}
+
+function markSplashShown() {
+    return logLicenseStep('splash_shown', {});
+}
+
+function markSplashClosed() {
+    return logLicenseStep('splash_closed', {});
+}
+
+function markExistingMainWindowFocused() {
+    return logLicenseStep('existing_main_window_focused', {});
+}
+
+function markActivationFlowTriggered() {
+    return logLicenseStep('activation_flow_triggered', {});
+}
+
+function markActivationFlowSignalReceived() {
+    return logLicenseStep('activation_flow_signal_received', {});
+}
+
+function markLicenseCancel() {
+    return logLicenseStep('license_cancel', {});
+}
+
+function markRendererError(message) {
+    return logLicenseStep('renderer_error', { message });
+}
+
+function markRendererUnhandledRejection(message) {
+    return logLicenseStep('renderer_unhandled_rejection', { message });
+}
+
+function markRendererDebug(message) {
+    return logLicenseStep('renderer_debug', { message });
+}
+
+function markActivationResultShown(message) {
+    return logLicenseStep('activation_result_shown', { message });
+}
+
+function markUpdateMessageSent(message) {
+    return logLicenseStep('update_message_sent', { message });
+}
+
+function markInstallErrorShown(message) {
+    return logLicenseStep('install_error_shown', { message });
+}
+
+function markLicenseWindowDidFinishLoad() {
+    return logLicenseStep('license_window_did_finish_load', {});
+}
+
+function markSplashWindowDidFinishLoad() {
+    return logLicenseStep('splash_window_did_finish_load', {});
+}
+
+function markLicenseEnsureStart() {
+    return logLicenseStep('ensure_license_start', {});
+}
+
+function markLicenseEnsureMissing() {
+    return logLicenseStep('ensure_license_missing', {});
+}
+
+function markLicenseEnsureValid() {
+    return logLicenseStep('ensure_license_valid', {});
+}
+
+function markLicenseEnsureInvalid(message) {
+    return logLicenseStep('ensure_license_invalid', { message });
+}
+
+function markLicenseEnsureOffline(message) {
+    return logLicenseStep('ensure_license_offline', { message });
+}
+
+function markGracePeriodUsed() {
+    return logLicenseStep('grace_period_used', {});
+}
+
+function markReadyToShow() {
+    return logLicenseStep('main_window_ready_to_show', {});
+}
+
+function markLicenseUiMessage(message) {
+    return logLicenseStep('license_ui_message', { message });
+}
+
+function markActivationResponseReturned(ok, message) {
+    return logLicenseStep('activation_response_returned', { ok, message });
+}
+
+function markActivationStartedInMain() {
+    return logLicenseStep('activation_started_in_main', {});
+}
+
+function markActivationSuccessBeforeTransition() {
+    return logLicenseStep('activation_success_before_transition', {});
+}
+
+function markTransitionStart() {
+    return logLicenseStep('transition_start', {});
+}
+
+function markTransitionRunChecks() {
+    return logLicenseStep('transition_run_checks', {});
+}
+
+function markMainWindowLoadUrl() {
+    return logLicenseStep('main_window_load_url', { url: 'http://localhost:3000' });
+}
+
+function markUpdateUiVisibleTarget(target) {
+    return logLicenseStep('update_ui_target', { target });
+}
+
+function markActivationWindowFocus() {
+    return logLicenseStep('activation_window_focus', {});
+}
+
+function markMainWindowShowFallback() {
+    return logLicenseStep('main_window_show_fallback', {});
+}
+
+function markLicenseWindowMessage(message) {
+    return logLicenseStep('license_window_message', { message });
+}
+
+function markSplashMessage(message) {
+    return logLicenseStep('splash_message', { message });
+}
+
+function markActivationUiNoResponse(message) {
+    return logLicenseStep('activation_ui_no_response', { message });
+}
+
+function markActivationUiSuccessVisible() {
+    return logLicenseStep('activation_ui_success_visible', {});
+}
+
+function markActivationUiErrorVisible(message) {
+    return logLicenseStep('activation_ui_error_visible', { message });
+}
+
+function markUpdateAutoInstall(version) {
+    return logLicenseStep('update_auto_install', { version });
+}
+
+function markShowSplashRequested() {
+    return logLicenseStep('show_splash_requested', {});
+}
+
+function markLicenseWindowStateSent(state) {
+    return logLicenseStep('license_state_sent', {
+        installationId: state && state.installationId ? state.installationId : '',
+        hasLicenseKey: !!(state && state.licenseKey)
+    });
+}
+
+function markPostLicenseFlowComplete() {
+    return logLicenseStep('post_license_flow_complete', {});
+}
+
+function markLicenseDebugSent(message) {
+    return logLicenseStep('license_debug_sent', { message });
+}
+
+function markActivationUiTrigger() {
+    return logLicenseStep('activation_ui_trigger', {});
+}
+
+function markUpdateCheckCall() {
+    return logLicenseStep('update_check_call', {});
+}
+
+function markReadyAppWhenReady() {
+    return logLicenseStep('app_when_ready', {});
+}
+
+function markAppWindowAllClosed() {
+    return logLicenseStep('window_all_closed', {});
+}
+
+function markAppQuit() {
+    return logLicenseStep('app_quit', {});
+}
+
+function markLicenseFileWritten(status) {
+    return logLicenseStep('license_file_written', { status });
+}
+
+function markLicenseFileRead(hasFile) {
+    return logLicenseStep('license_file_read', { hasFile });
+}
+
+function markLicensePayloadPrepared(action, installationId) {
+    return logLicenseStep('license_payload_prepared', {
+        action,
+        installationId,
+        domain: getLicenseDomain(installationId)
+    });
+}
+
+function markLicenseResponseVerified(action) {
+    return logLicenseStep('license_response_verified', { action });
+}
+
+function markResponseVerificationFailed(message) {
+    return logLicenseStep('response_verification_failed', { message });
+}
+
+function markUpdateInfoFlush() {
+    return logLicenseStep('update_info_flush', {});
+}
+
+function markSplashInstallDone() {
+    return logLicenseStep('splash_install_done', {});
+}
+
+function markSplashNeedsInstall() {
+    return logLicenseStep('splash_needs_install', {});
+}
+
+function markSplashAllOk() {
+    return logLicenseStep('splash_all_ok', {});
+}
+
+function markLicenseWindowShowRequest() {
+    return logLicenseStep('license_window_show_request', {});
+}
+
+function markActivationSignalSend() {
+    return logLicenseStep('activation_signal_send', {});
+}
+
+function markLicenseWindowRemoteLog(message) {
+    return logLicenseStep('license_window_remote_log', { message });
+}
+
+function markUpdateSkippedDueToAlreadyStarted() {
+    return logLicenseStep('update_skipped_already_started', {});
+}
+
+function markInstallDependenciesStart() {
+    return logLicenseStep('install_dependencies_start', {});
+}
+
+function markInstallDependenciesError(message) {
+    return logLicenseStep('install_dependencies_error', { message });
+}
+
+function markInstallDependenciesDone() {
+    return logLicenseStep('install_dependencies_done', {});
+}
+
+function markMainWindowClosePrompt() {
+    return logLicenseStep('main_window_close_prompt', {});
+}
+
+function markMainWindowClosedByUser() {
+    return logLicenseStep('main_window_closed_by_user', {});
+}
+
+function markActivationButtonNoop() {
+    return logLicenseStep('activation_button_noop', {});
+}
+
+function markLicenseWindowInputEnter() {
+    return logLicenseStep('license_window_input_enter', {});
+}
+
+function markActivationInvokeReturned() {
+    return logLicenseStep('activation_invoke_returned', {});
+}
+
+function markActivationInvokeCaught(message) {
+    return logLicenseStep('activation_invoke_caught', { message });
+}
+
+function markShowSplashFocus() {
+    return logLicenseStep('show_splash_focus', {});
+}
+
+function markUpdateListenerRegistered() {
+    return logLicenseStep('update_listener_registered', {});
+}
+
+function markUpdateCheckNotifyCalled() {
+    return logLicenseStep('update_check_notify_called', {});
+}
+
+function markLicenseStateFlush() {
+    return logLicenseStep('license_state_flush', {});
+}
+
+function markStartPostLicenseFlow() {
+    return logLicenseStep('start_post_license_flow', {});
+}
+
+function markLicenseWindowReadyNotify() {
+    return logLicenseStep('license_window_ready_notify', {});
+}
+
+function markUpdateMessageBuffered() {
+    return logLicenseStep('update_message_buffered', {});
+}
+
+function markActivationButtonUiDisabled() {
+    return logLicenseStep('activation_button_ui_disabled', {});
+}
+
+function markActivationButtonUiEnabled() {
+    return logLicenseStep('activation_button_ui_enabled', {});
+}
+
+function markLicenseWindowFocusRequest() {
+    return logLicenseStep('license_window_focus_request', {});
+}
+
+function markLicenseStatusSet(message) {
+    return logLicenseStep('license_status_set', { message });
+}
+
+function markLicenseMetaUpdated(installationId) {
+    return logLicenseStep('license_meta_updated', { installationId });
+}
+
+function markRemoteLogPlanned() {
+    return logLicenseStep('remote_log_planned', {});
+}
+
+function markLicenseDebugWindowUnavailable(message) {
+    return logLicenseStep('license_debug_window_unavailable', { message });
+}
+
+function markLicenseWindowStillOpen() {
+    return logLicenseStep('license_window_still_open', {});
+}
+
+function markActivationUiComplete() {
+    return logLicenseStep('activation_ui_complete', {});
+}
+
+function markActivationFlowMainReturned() {
+    return logLicenseStep('activation_flow_main_returned', {});
+}
+
+function markUpdateCheckEnsureCalled() {
+    return logLicenseStep('update_check_ensure_called', {});
+}
+
+function markUpdateUiMessagePending(message) {
+    return logLicenseStep('update_ui_message_pending', { message });
+}
+
+function markWindowReadySignal(name) {
+    return logLicenseStep('window_ready_signal', { name });
+}
+
+function markLaunchServerRequireError(message) {
+    return logLicenseStep('launch_server_require_error', { message });
+}
+
+function markLaunchServerRequired() {
+    return logLicenseStep('launch_server_required', {});
+}
+
+function markLicenseWindowDebugDisplay(message) {
+    return logLicenseStep('license_window_debug_display', { message });
+}
+
+function markUpdateInfoTarget(name) {
+    return logLicenseStep('update_info_target', { name });
+}
+
+function markUiFallbackShow() {
+    return logLicenseStep('ui_fallback_show', {});
+}
+
+function markActivationDoneReady() {
+    return logLicenseStep('activation_done_ready', {});
+}
+
+function markServerBootAttempt() {
+    return logLicenseStep('server_boot_attempt', {});
+}
+
+function markServerBootSuccess() {
+    return logLicenseStep('server_boot_success', {});
+}
+
+function markServerBootFailure(message) {
+    return logLicenseStep('server_boot_failure', { message });
+}
+
+function markLicenseWindowCreated() {
+    return logLicenseStep('license_window_created', {});
+}
+
+function markSplashWindowCreated() {
+    return logLicenseStep('splash_window_created', {});
+}
+
+function markMainWindowCreated() {
+    return logLicenseStep('main_window_created', {});
+}
+
+function markActivationResponseOk(ok) {
+    return logLicenseStep('activation_response_ok', { ok });
+}
+
+function markActivationWindowClosed() {
+    return logLicenseStep('activation_window_closed', {});
+}
+
+function markUpdateStatusVisible(message) {
+    return logLicenseStep('update_status_visible', { message });
+}
+
+function markActivationLastStep(step) {
+    return logLicenseStep('activation_last_step', { step });
+}
+
+function markPendingUpdateState(message, logMessage) {
+    return logLicenseStep('pending_update_state', { message, logMessage });
+}
+
+function markShowSplashAfterActivation() {
+    return logLicenseStep('show_splash_after_activation', {});
+}
+
+function markMainWindowLoadRequested() {
+    return logLicenseStep('main_window_load_requested', {});
+}
+
+function markRendererStatusMessage(message) {
+    return logLicenseStep('renderer_status_message', { message });
+}
+
+function markActivationPathChosen(pathName) {
+    return logLicenseStep('activation_path_chosen', { pathName });
+}
+
+function markActivationWindowVisible() {
+    return logLicenseStep('activation_window_visible', {});
+}
+
+function markUpdateStateReset() {
+    return logLicenseStep('update_state_reset', {});
+}
+
+function markLicenseUiReady() {
+    return logLicenseStep('license_ui_ready', {});
+}
+
+function markActivationDebug(message) {
+    return logLicenseStep('activation_debug', { message });
+}
+
+function markActivationHttpResponse(status) {
+    return logLicenseStep('activation_http_response', { status });
+}
+
+function markActivationHttpPayload(action) {
+    return logLicenseStep('activation_http_payload', { action });
+}
+
+function markActivationUiStillVisible() {
+    return logLicenseStep('activation_ui_still_visible', {});
+}
+
+function markLicenseFlowEntry() {
+    return logLicenseStep('license_flow_entry', {});
+}
+
+function markLicenseFlowExit() {
+    return logLicenseStep('license_flow_exit', {});
+}
+
+function markUpdateUiDelivered() {
+    return logLicenseStep('update_ui_delivered', {});
+}
+
+function markRemoteLogPosted(event) {
+    return logLicenseStep('remote_log_posted', { event });
+}
+
+function markLicenseShowState(message) {
+    return logLicenseStep('license_show_state', { message });
+}
+
+function markBeforeRunChecks() {
+    return logLicenseStep('before_run_checks', {});
+}
+
+function markAfterRunChecks() {
+    return logLicenseStep('after_run_checks', {});
+}
+
+function markUpdateListenerError(message) {
+    return logLicenseStep('update_listener_error', { message });
+}
+
+function markReadyToFocusSplash() {
+    return logLicenseStep('ready_to_focus_splash', {});
+}
+
+function markTransitionFocusApp() {
+    return logLicenseStep('transition_focus_app', {});
+}
+
+function markLicenseWindowMessageEmitted(message) {
+    return logLicenseStep('license_window_message_emitted', { message });
+}
+
+function markActivationUiRemote(message) {
+    return logLicenseStep('activation_ui_remote', { message });
+}
+
+function markAppReadyStart() {
+    return logLicenseStep('app_ready_start', {});
+}
+
+function markAppReadyEnd() {
+    return logLicenseStep('app_ready_end', {});
+}
+
+function markCheckForUpdatesEnter() {
+    return logLicenseStep('check_for_updates_enter', {});
+}
+
+function markCheckForUpdatesLeave() {
+    return logLicenseStep('check_for_updates_leave', {});
+}
+
+function markLicenseUiFlushed() {
+    return logLicenseStep('license_ui_flushed', {});
+}
+
+function markActivationUiFinalMessage(message) {
+    return logLicenseStep('activation_ui_final_message', { message });
+}
+
+function markServerLoadUrl() {
+    return logLicenseStep('server_load_url', { url: 'http://localhost:3000' });
+}
+
+function markActivationUiResponse(message) {
+    return logLicenseStep('activation_ui_response', { message });
+}
+
+function markUpdateInfoBuffered(message) {
+    return logLicenseStep('update_info_buffered', { message });
+}
+
+function markSplashStatusMessage(message) {
+    return logLicenseStep('splash_status_message', { message });
+}
+
+function markLicenseReadyFlush() {
+    return logLicenseStep('license_ready_flush', {});
+}
+
+function markActivationButtonBegin() {
+    return logLicenseStep('activation_button_begin', {});
+}
+
+function markActivationButtonEnd() {
+    return logLicenseStep('activation_button_end', {});
+}
+
+function markWindowLoadFailure(errorDescription) {
+    return logLicenseStep('window_load_failure', { errorDescription });
+}
+
+function markWindowGone(reason) {
+    return logLicenseStep('window_gone', { reason });
+}
+
+function markWindowUnresponsive() {
+    return logLicenseStep('window_unresponsive', {});
+}
+
+function markShowSplashComplete() {
+    return logLicenseStep('show_splash_complete', {});
+}
+
+function markExistingMainWindowShow() {
+    return logLicenseStep('existing_main_window_show', {});
+}
+
+function markPendingUpdateFlushed() {
+    return logLicenseStep('pending_update_flushed', {});
+}
+
+function markReadyToShowMain() {
+    return logLicenseStep('ready_to_show_main', {});
+}
+
+function markLicenseUiBoot() {
+    return logLicenseStep('license_ui_boot', {});
+}
+
+function markEnsureUpdateTriggered() {
+    return logLicenseStep('ensure_update_triggered', {});
+}
+
+function markVisibleErrorCreated(message) {
+    return logLicenseStep('visible_error_created', { message });
+}
+
+function markVisibleInfoCreated(message) {
+    return logLicenseStep('visible_info_created', { message });
+}
+
+function markRendererReadyPing() {
+    return logLicenseStep('renderer_ready_ping', {});
+}
+
+function markRendererButtonPing() {
+    return logLicenseStep('renderer_button_ping', {});
+}
+
+function markRendererCompletionPing() {
+    return logLicenseStep('renderer_completion_ping', {});
+}
+
+function markAppWhenReadyFlow() {
+    return logLicenseStep('app_when_ready_flow', {});
+}
+
+function markAppWindowClosedFlow() {
+    return logLicenseStep('app_window_closed_flow', {});
+}
+
+function markRunChecksSafeError(message) {
+    return logLicenseStep('run_checks_safe_error', { message });
+}
+
+function markLicenseWindowFlush() {
+    return logLicenseStep('license_window_flush', {});
+}
+
+function markRemoteLogError(message) {
+    return logLicenseStep('remote_log_error', { message });
+}
+
+function markRemoteLogSuccess(event) {
+    return logLicenseStep('remote_log_success', { event });
+}
+
+function markUpdateInfoImmediate(message) {
+    return logLicenseStep('update_info_immediate', { message });
+}
+
+function markWindowVisibilityProblem() {
+    return logLicenseStep('window_visibility_problem', {});
+}
+
+function markActivationUiClicked() {
+    return logLicenseStep('activation_ui_clicked', {});
+}
+
+function markActivationUiPromiseReturned() {
+    return logLicenseStep('activation_ui_promise_returned', {});
+}
+
+function markActivationUiPromiseError(message) {
+    return logLicenseStep('activation_ui_promise_error', { message });
+}
+
+function markLicenseStateMessage(message) {
+    return logLicenseStep('license_state_message', { message });
+}
+
+function markUpdatePendingMessage(message) {
+    return logLicenseStep('update_pending_message', { message });
+}
+
+function markUpdatePendingLog(message) {
+    return logLicenseStep('update_pending_log', { message });
+}
+
+function markLicenseWindowIsLoading() {
+    return logLicenseStep('license_window_is_loading', {});
+}
+
+function markLicenseWindowLoadedSend() {
+    return logLicenseStep('license_window_loaded_send', {});
+}
+
+function markSplashUpdateInfo(message) {
+    return logLicenseStep('splash_update_info', { message });
+}
+
+function markSplashInstallLog(message) {
+    return logLicenseStep('splash_install_log', { message });
+}
+
+function markLicenseUpdateInfo(message) {
+    return logLicenseStep('license_update_info', { message });
+}
+
+function markLicenseUpdateLog(message) {
+    return logLicenseStep('license_update_log', { message });
+}
+
+function markVisibleTransition() {
+    return logLicenseStep('visible_transition', {});
+}
+
+function markMainWindowVisible() {
+    return logLicenseStep('main_window_visible', {});
+}
+
+function markActivationUiAfterSuccess() {
+    return logLicenseStep('activation_ui_after_success', {});
+}
+
+function markLicenseUiWindowDestroyed() {
+    return logLicenseStep('license_ui_window_destroyed', {});
+}
+
+function markUpdateInfoShouldShow(shouldShow) {
+    return logLicenseStep('update_info_should_show', { shouldShow });
+}
+
+function markSplashWindowVisible() {
+    return logLicenseStep('splash_window_visible', {});
+}
+
+function markSplashWindowHidden() {
+    return logLicenseStep('splash_window_hidden', {});
+}
+
+function markLicenseWindowVisibleNow() {
+    return logLicenseStep('license_window_visible_now', {});
+}
+
+function markActivationUiDelayedSignal() {
+    return logLicenseStep('activation_ui_delayed_signal', {});
+}
+
+function markWindowReadyToShowTriggered() {
+    return logLicenseStep('window_ready_to_show_triggered', {});
+}
+
+function markWindowFallbackTriggered() {
+    return logLicenseStep('window_fallback_triggered', {});
+}
+
+function markUpdateEventUi(message) {
+    return logLicenseStep('update_event_ui', { message });
+}
+
+function markSplashWindowCloseRequest() {
+    return logLicenseStep('splash_window_close_request', {});
+}
+
+function markActivationTransitionMessage(message) {
+    return logLicenseStep('activation_transition_message', { message });
+}
+
+function markLicenseStatusEmit(message) {
+    return logLicenseStep('license_status_emit', { message });
+}
+
+function markLogUrlConfigured() {
+    return logLicenseStep('log_url_configured', { url: LICENSE_LOG_URL });
+}
+
+function markUpdateStartedFlag() {
+    return logLicenseStep('update_started_flag', {});
+}
+
+function markActivationNoUi(message) {
+    return logLicenseStep('activation_no_ui', { message });
+}
+
+function markStartPostFlowCall() {
+    return logLicenseStep('start_post_flow_call', {});
+}
+
+function markVisibleActivationProgress(message) {
+    return logLicenseStep('visible_activation_progress', { message });
+}
+
+function markLicenseWindowReadyCallback() {
+    return logLicenseStep('license_window_ready_callback', {});
+}
+
+function markPendingUpdateDelivered() {
+    return logLicenseStep('pending_update_delivered', {});
+}
+
+function markShowSplashWindowVisible() {
+    return logLicenseStep('show_splash_window_visible', {});
+}
+
+function markLaunchUrlLoad() {
+    return logLicenseStep('launch_url_load', { url: 'http://localhost:3000' });
+}
+
+function markLicenseWindowUpdateFlush() {
+    return logLicenseStep('license_window_update_flush', {});
+}
+
+function markActivationUiCompleteSignal() {
+    return logLicenseStep('activation_ui_complete_signal', {});
+}
+
+function markActivationUiBeforeInvoke() {
+    return logLicenseStep('activation_ui_before_invoke', {});
+}
+
+function markActivationUiAfterInvoke(ok) {
+    return logLicenseStep('activation_ui_after_invoke', { ok });
+}
+
+function markActivationUiCatch(message) {
+    return logLicenseStep('activation_ui_catch', { message });
+}
+
+function markAppFocused() {
+    return logLicenseStep('app_focused', {});
+}
+
+function markSplashMoveTop() {
+    return logLicenseStep('splash_move_top', {});
+}
+
+function markSplashTopReset() {
+    return logLicenseStep('splash_top_reset', {});
+}
+
+function markExistingMainWindowReturn() {
+    return logLicenseStep('existing_main_window_return', {});
+}
+
+function markReadyToShowFocus() {
+    return logLicenseStep('ready_to_show_focus', {});
+}
+
+function markFallbackShowFocus() {
+    return logLicenseStep('fallback_show_focus', {});
+}
+
+function markDidFinishLoadFocus() {
+    return logLicenseStep('did_finish_load_focus', {});
+}
+
+function markLicenseWindowOnReadyMessage(message) {
+    return logLicenseStep('license_window_on_ready_message', { message });
+}
+
+function markShouldShowUpdateTarget(name) {
+    return logLicenseStep('should_show_update_target', { name });
+}
+
+function markRunChecksTriggered() {
+    return logLicenseStep('run_checks_triggered', {});
+}
+
+function markLogPostRequested(event) {
+    return logLicenseStep('log_post_requested', { event });
+}
+
+function markMainWindowLoadAttempt() {
+    return logLicenseStep('main_window_load_attempt', {});
+}
+
+function markMainWindowLoadDone() {
+    return logLicenseStep('main_window_load_done', {});
+}
+
+function markLicenseLogSetup() {
+    return logLicenseStep('license_log_setup', {});
+}
+
+function markLicenseActivationUiPath() {
+    return logLicenseStep('license_activation_ui_path', {});
+}
+
+function markUpdateAutoDownloadEnabled() {
+    return logLicenseStep('update_auto_download_enabled', {});
+}
+
+function markUpdateAutoInstallEnabled() {
+    return logLicenseStep('update_auto_install_enabled', {});
+}
+
+function markLogVisibilityState(state) {
+    return logLicenseStep('log_visibility_state', state || {});
+}
+
+function markOpenLicensedAppStart() {
+    return logLicenseStep('open_licensed_app_start', {});
+}
+
+function markOpenLicensedAppDenied() {
+    return logLicenseStep('open_licensed_app_denied', {});
+}
+
+function markOpenLicensedAppAllowed() {
+    return logLicenseStep('open_licensed_app_allowed', {});
+}
+
+function markLicenseWindowShowPayload(payload) {
+    return logLicenseStep('license_window_show_payload', {
+        installationId: payload && payload.installationId ? payload.installationId : '',
+        hasMessage: !!(payload && payload.message),
+        ok: !!(payload && payload.ok),
+        type: payload && payload.type ? payload.type : ''
+    });
+}
+
+function markVisibleActivationState(message) {
+    return logLicenseStep('visible_activation_state', { message });
+}
+
+function markUpdateNoUiTarget() {
+    return logLicenseStep('update_no_ui_target', {});
+}
+
+function markWindowCloseByUpdate() {
+    return logLicenseStep('window_close_by_update', {});
+}
+
+function markLaunchAlreadyOpen() {
+    return logLicenseStep('launch_already_open', {});
+}
+
+function markLicenseUiRemoteReady() {
+    return logLicenseStep('license_ui_remote_ready', {});
+}
+
+function markMainWindowRenderGone(reason) {
+    return logLicenseStep('main_window_render_gone', { reason });
+}
+
+function markActivationSucceededState() {
+    return logLicenseStep('activation_succeeded_state', {});
+}
+
+function markActivationFailedState(message) {
+    return logLicenseStep('activation_failed_state', { message });
+}
+
+function markLicenseWindowLastState(message) {
+    return logLicenseStep('license_window_last_state', { message });
+}
+
+function markUpdateBufferedState(message, logMessage) {
+    return logLicenseStep('update_buffered_state', { message, logMessage });
+}
+
+function markActivationUiWaitStart() {
+    return logLicenseStep('activation_ui_wait_start', {});
+}
+
+function markActivationUiWaitEnd() {
+    return logLicenseStep('activation_ui_wait_end', {});
+}
+
+function markActivationUiNoMessage() {
+    return logLicenseStep('activation_ui_no_message', {});
+}
+
+function markActivationUiOk() {
+    return logLicenseStep('activation_ui_ok', {});
+}
+
+function markActivationUiErr() {
+    return logLicenseStep('activation_ui_err', {});
+}
+
+function markLogStart() {
+    return logLicenseStep('log_start', {});
+}
+
+function markUpdateCalledFromInstall() {
+    return logLicenseStep('update_called_from_install', {});
+}
+
+function markUpdateCalledFromChecks() {
+    return logLicenseStep('update_called_from_checks', {});
+}
+
+function markUpdateCalledFromReady() {
+    return logLicenseStep('update_called_from_ready', {});
+}
+
+function markShowSplashHideLicense() {
+    return logLicenseStep('show_splash_hide_license', {});
+}
+
+function markActivationUiStateAfterResult(ok) {
+    return logLicenseStep('activation_ui_state_after_result', { ok });
+}
+
+function markLicenseDebugVisible(message) {
+    return logLicenseStep('license_debug_visible', { message });
+}
+
+function markUpdateProgressUi(percent) {
+    return logLicenseStep('update_progress_ui', { percent });
+}
+
+function markUpdateDownloadedUi(version) {
+    return logLicenseStep('update_downloaded_ui', { version });
+}
+
+function markActivationWindowTop() {
+    return logLicenseStep('activation_window_top', {});
+}
+
+function markLicenseWindowBringToFront() {
+    return logLicenseStep('license_window_bring_to_front', {});
+}
+
+function markStateSentToWindow() {
+    return logLicenseStep('state_sent_to_window', {});
+}
+
+function markUpdateCallComplete() {
+    return logLicenseStep('update_call_complete', {});
+}
+
+function markSplashVisibleFocus() {
+    return logLicenseStep('splash_visible_focus', {});
+}
+
+function markLicenseActivationMainDone() {
+    return logLicenseStep('license_activation_main_done', {});
+}
+
+function markActivationVisibilityIssue() {
+    return logLicenseStep('activation_visibility_issue', {});
+}
+
+function markWindowShowAfterLoad() {
+    return logLicenseStep('window_show_after_load', {});
+}
+
+function markActivationAfterUpdateMessage() {
+    return logLicenseStep('activation_after_update_message', {});
+}
+
+function markLicenseResponseSuccess(action) {
+    return logLicenseStep('license_response_success', { action });
+}
+
+function markLicenseResponseFailure(action, message) {
+    return logLicenseStep('license_response_failure', { action, message });
+}
+
+function markRendererHookReady() {
+    return logLicenseStep('renderer_hook_ready', {});
+}
+
+function markRendererHookButton() {
+    return logLicenseStep('renderer_hook_button', {});
+}
+
+function markRendererHookComplete() {
+    return logLicenseStep('renderer_hook_complete', {});
+}
+
+function markLicenseStateDispatched() {
+    return logLicenseStep('license_state_dispatched', {});
+}
+
+function markUpdateInfoDispatched() {
+    return logLicenseStep('update_info_dispatched', {});
+}
+
+function markRunChecksUiStart() {
+    return logLicenseStep('run_checks_ui_start', {});
+}
+
+function markRunChecksUiFinish(allOk) {
+    return logLicenseStep('run_checks_ui_finish', { allOk });
+}
+
+function markActivationNeedsUi() {
+    return logLicenseStep('activation_needs_ui', {});
+}
+
+function markActivationPostSignal() {
+    return logLicenseStep('activation_post_signal', {});
+}
+
+function markActivationHideWindow() {
+    return logLicenseStep('activation_hide_window', {});
+}
+
+function markActivationRunChecksSafe() {
+    return logLicenseStep('activation_run_checks_safe', {});
+}
+
+function markActivationShowSplash() {
+    return logLicenseStep('activation_show_splash', {});
+}
+
+function markLicenseActivationReturn() {
+    return logLicenseStep('license_activation_return', {});
+}
+
+function markMainWindowReadyLog() {
+    return logLicenseStep('main_window_ready_log', {});
+}
+
+function markLicenseStatusVisible(message) {
+    return logLicenseStep('license_status_visible', { message });
+}
+
+function markUpdateInfoVisible(message) {
+    return logLicenseStep('update_info_visible', { message });
+}
+
+function markShowSplashWindow() {
+    return logLicenseStep('show_splash_window', {});
+}
+
+function markStartPostFlowVisible() {
+    return logLicenseStep('start_post_flow_visible', {});
+}
+
+function markActivationUiSetTimeout() {
+    return logLicenseStep('activation_ui_set_timeout', {});
+}
+
+function markActivationUiBeforeReturn() {
+    return logLicenseStep('activation_ui_before_return', {});
+}
+
+function markUpdatePendingFlush() {
+    return logLicenseStep('update_pending_flush', {});
+}
+
+function markRemoteLogVisible(event) {
+    return logLicenseStep('remote_log_visible', { event });
+}
+
+function markLicenseWindowDidClose() {
+    return logLicenseStep('license_window_did_close', {});
+}
+
+function markUpdateNotifyStart() {
+    return logLicenseStep('update_notify_start', {});
+}
+
+function markUpdateNotifyDone() {
+    return logLicenseStep('update_notify_done', {});
+}
+
+function markReadyToShowCloseSplash() {
+    return logLicenseStep('ready_to_show_close_splash', {});
+}
+
+function markMainWindowFallbackCloseSplash() {
+    return logLicenseStep('main_window_fallback_close_splash', {});
+}
+
+function markSplashInstallError(message) {
+    return logLicenseStep('splash_install_error', { message });
+}
+
+function markActivationUiFinal(ok) {
+    return logLicenseStep('activation_ui_final', { ok });
+}
+
+function markUpdateUiTargetResolved(target) {
+    return logLicenseStep('update_ui_target_resolved', { target });
+}
+
+function markCheckForUpdatesAlreadyStarted() {
+    return logLicenseStep('check_for_updates_already_started', {});
+}
+
+function markUpdateReadyForLicense() {
+    return logLicenseStep('update_ready_for_license', {});
+}
+
+function markLicenseWindowInitialState(message) {
+    return logLicenseStep('license_window_initial_state', { message });
+}
+
+function markRendererStatusUpdate(message) {
+    return logLicenseStep('renderer_status_update', { message });
+}
+
+function markRemoteActivationVisible(message) {
+    return logLicenseStep('remote_activation_visible', { message });
+}
+
+function markAfterActivationReturn() {
+    return logLicenseStep('after_activation_return', {});
+}
+
+function markLaunchAppServerOk() {
+    return logLicenseStep('launch_app_server_ok', {});
+}
+
+function markLaunchAppServerFail(message) {
+    return logLicenseStep('launch_app_server_fail', { message });
+}
+
+function markWindowLoadUrlTwice() {
+    return logLicenseStep('window_load_url_twice', {});
+}
+
+function markActivationUiStatus(message) {
+    return logLicenseStep('activation_ui_status', { message });
+}
+
+function markUpdateEventReceived(event) {
+    return logLicenseStep('update_event_received', { event });
+}
+
+function markLicenseWindowLifecycle(message) {
+    return logLicenseStep('license_window_lifecycle', { message });
+}
+
+function markPostActivationStart() {
+    return logLicenseStep('post_activation_start', {});
+}
+
+function markPostActivationShowSplash() {
+    return logLicenseStep('post_activation_show_splash', {});
+}
+
+function markPostActivationRunChecks() {
+    return logLicenseStep('post_activation_run_checks', {});
+}
+
+function markPostActivationEnd() {
+    return logLicenseStep('post_activation_end', {});
+}
+
+function markLicenseWindowResponse(message) {
+    return logLicenseStep('license_window_response', { message });
+}
+
+function markActivationWindowMessageVisible(message) {
+    return logLicenseStep('activation_window_message_visible', { message });
+}
+
+function markRunChecksEntry() {
+    return logLicenseStep('run_checks_entry', {});
+}
+
+function markRunChecksExit(allOk) {
+    return logLicenseStep('run_checks_exit', { allOk });
+}
+
+function markServerRequireAttempt() {
+    return logLicenseStep('server_require_attempt', {});
+}
+
+function markServerRequireSuccess() {
+    return logLicenseStep('server_require_success', {});
+}
+
+function markServerRequireFailure(message) {
+    return logLicenseStep('server_require_failure', { message });
+}
+
+function markMainWindowListener(eventName) {
+    return logLicenseStep('main_window_listener', { eventName });
+}
+
+function markActivationStatusVisible(message) {
+    return logLicenseStep('activation_status_visible', { message });
+}
+
+function markUpdateUiSent(message) {
+    return logLicenseStep('update_ui_sent', { message });
+}
+
+function markMainWindowLoading() {
+    return logLicenseStep('main_window_loading', {});
+}
+
+function markWindowLoadErrorToSplash(message) {
+    return logLicenseStep('window_load_error_to_splash', { message });
+}
+
+function markWindowUnresponsiveToSplash() {
+    return logLicenseStep('window_unresponsive_to_splash', {});
+}
+
+function markRenderGoneToSplash(reason) {
+    return logLicenseStep('render_gone_to_splash', { reason });
+}
+
+function markUpdateDownloadVisible(version) {
+    return logLicenseStep('update_download_visible', { version });
+}
+
+function markUpdateProgressVisible(percent) {
+    return logLicenseStep('update_progress_visible', { percent });
+}
+
+function markLicenseActivationVisible(message) {
+    return logLicenseStep('license_activation_visible', { message });
+}
+
+function markLogBridgeReady() {
+    return logLicenseStep('log_bridge_ready', {});
+}
+
+function markUpdateCheckStartedVisible() {
+    return logLicenseStep('update_check_started_visible', {});
+}
+
+function markActivationTransitionVisible() {
+    return logLicenseStep('activation_transition_visible', {});
+}
+
+function markLicenseUiWaiting() {
+    return logLicenseStep('license_ui_waiting', {});
+}
+
+function markUpdateUiWaiting(message) {
+    return logLicenseStep('update_ui_waiting', { message });
+}
+
+function markSplashUiWaiting(message) {
+    return logLicenseStep('splash_ui_waiting', { message });
+}
+
+function markActivationUiLog(message) {
+    return logLicenseStep('activation_ui_log', { message });
+}
+
+function markRendererVisibility(message) {
+    return logLicenseStep('renderer_visibility', { message });
+}
+
+function markWindowFallbackVisible() {
+    return logLicenseStep('window_fallback_visible', {});
+}
+
+function markLicenseUiLogTarget(message) {
+    return logLicenseStep('license_ui_log_target', { message });
+}
+
+function markPostFlowUi(message) {
+    return logLicenseStep('post_flow_ui', { message });
+}
+
+function markUpdateCheckUi(message) {
+    return logLicenseStep('update_check_ui', { message });
+}
+
+function markPostActivationUi(message) {
+    return logLicenseStep('post_activation_ui', { message });
+}
+
+function markActivationStuck(message) {
+    return logLicenseStep('activation_stuck', { message });
+}
+
+function markVisibleNoop(message) {
+    return logLicenseStep('visible_noop', { message });
+}
+
+function markRemoteLogMessage(message) {
+    return logLicenseStep('remote_log_message', { message });
+}
+
+function markUpdateTriggeredFromLicense() {
+    return logLicenseStep('update_triggered_from_license', {});
+}
+
+function markActivationUiDisplayed(message) {
+    return logLicenseStep('activation_ui_displayed', { message });
+}
+
+function markDelayedSignalStart() {
+    return logLicenseStep('delayed_signal_start', {});
+}
+
+function markDelayedSignalSent() {
+    return logLicenseStep('delayed_signal_sent', {});
+}
+
+function markNoWindowForUpdate() {
+    return logLicenseStep('no_window_for_update', {});
+}
+
+function markActivationNowVisible() {
+    return logLicenseStep('activation_now_visible', {});
+}
+
+function markActivationVisibilityResolved() {
+    return logLicenseStep('activation_visibility_resolved', {});
+}
+
+function markMainWindowLoadInvoked() {
+    return logLicenseStep('main_window_load_invoked', {});
+}
+
+function markTransitionRequested() {
+    return logLicenseStep('transition_requested', {});
+}
+
+function markUpdateCheckOnLicenseScreen() {
+    return logLicenseStep('update_check_on_license_screen', {});
+}
+
+function markLicenseUiUpdaterMessage(message) {
+    return logLicenseStep('license_ui_updater_message', { message });
+}
+
+function markLicenseUiUpdaterLog(message) {
+    return logLicenseStep('license_ui_updater_log', { message });
+}
+
+function markActivationReturnMessage(message) {
+    return logLicenseStep('activation_return_message', { message });
+}
+
+function markActivationVisibleError(message) {
+    return logLicenseStep('activation_visible_error', { message });
+}
+
+function markActivationVisibleOk(message) {
+    return logLicenseStep('activation_visible_ok', { message });
+}
+
+function markLaunchAppVisible() {
+    return logLicenseStep('launch_app_visible', {});
+}
+
+function markActivationPathUpdate() {
+    return logLicenseStep('activation_path_update', {});
+}
+
+function markLicenseUiUpdaterTarget(target) {
+    return logLicenseStep('license_ui_updater_target', { target });
+}
+
+function markActivationStillNothing() {
+    return logLicenseStep('activation_still_nothing', {});
+}
+
+function markNeedVisibleFix() {
+    return logLicenseStep('need_visible_fix', {});
+}
+
+function markUpdateAtLicenseBeforeActivation() {
+    return logLicenseStep('update_at_license_before_activation', {});
+}
+
+function markActivationUiHasResult(ok) {
+    return logLicenseStep('activation_ui_has_result', { ok });
+}
+
+function markActivationUiSeesMessage(message) {
+    return logLicenseStep('activation_ui_sees_message', { message });
+}
+
+function markLicenseUiOnOpen() {
+    return logLicenseStep('license_ui_on_open', {});
+}
+
+function markStartUpdateBeforeLicense() {
+    return logLicenseStep('start_update_before_license', {});
+}
+
+function markLicenseAndUpdateIssue() {
+    return logLicenseStep('license_and_update_issue', {});
+}
+
+function markLogPhpReady() {
+    return logLicenseStep('log_php_ready', { url: LICENSE_LOG_URL });
+}
+
+function markActivationNoVisibleChange() {
+    return logLicenseStep('activation_no_visible_change', {});
+}
+
+function markUiVisibleBugFix() {
+    return logLicenseStep('ui_visible_bug_fix', {});
+}
+
+function markLicenseUiUpdateBuffer() {
+    return logLicenseStep('license_ui_update_buffer', {});
+}
+
+function markUpdateNowOnLicense() {
+    return logLicenseStep('update_now_on_license', {});
+}
+
+function markActivationUiCurrentState(message) {
+    return logLicenseStep('activation_ui_current_state', { message });
+}
+
+function markRemoteLogEnabled() {
+    return logLicenseStep('remote_log_enabled', { url: LICENSE_LOG_URL });
+}
+
+function markLicenseUiNotice(message) {
+    return logLicenseStep('license_ui_notice', { message });
+}
+
+function markActivationLogPhase(phase) {
+    return logLicenseStep('activation_log_phase', { phase });
+}
+
+function markLicenseDebugPhase(phase) {
+    return logLicenseStep('license_debug_phase', { phase });
+}
+
+function markUpdaterPhase(phase) {
+    return logLicenseStep('updater_phase', { phase });
+}
+
+function markVisibleState(state) {
+    return logLicenseStep('visible_state', state || {});
+}
+
+function markLicenseScreenUpdaterReady() {
+    return logLicenseStep('license_screen_updater_ready', {});
+}
+
+function markActivationUiHeartbeat(message) {
+    return logLicenseStep('activation_ui_heartbeat', { message });
+}
+
+function markFinalFixAttempt() {
+    return logLicenseStep('final_fix_attempt', {});
+}
+
+function markUpdatePreLicenseRunning() {
+    return logLicenseStep('update_pre_license_running', {});
+}
+
+function markActivationRemoteTrace(message) {
+    return logLicenseStep('activation_remote_trace', { message });
+}
+
+function markLastVisibleMessage(message) {
+    return logLicenseStep('last_visible_message', { message });
+}
+
+function markUpdateDeliveryPath(pathName) {
+    return logLicenseStep('update_delivery_path', { pathName });
+}
+
+function markActivationRenderState(state) {
+    return logLicenseStep('activation_render_state', state || {});
+}
+
+function markLicenseUiMaybeStuck() {
+    return logLicenseStep('license_ui_maybe_stuck', {});
+}
+
+function markUpdateNowVisible(message) {
+    return logLicenseStep('update_now_visible', { message });
+}
+
+function markLicenseFlowHotfix() {
+    return logLicenseStep('license_flow_hotfix', {});
+}
+
+function markActivationWindowNothing() {
+    return logLicenseStep('activation_window_nothing', {});
+}
+
+function markUpdateReachedLicense(message) {
+    return logLicenseStep('update_reached_license', { message });
+}
+
+function markLogMessageVisible(message) {
+    return logLicenseStep('log_message_visible', { message });
+}
+
+function markActivationPathFinal() {
+    return logLicenseStep('activation_path_final', {});
+}
+
+function markFixRequestedByUser() {
+    return logLicenseStep('fix_requested_by_user', {});
+}
+
+function markStillBroken() {
+    return logLicenseStep('still_broken', {});
+}
+
+function markDebuggingEnabled() {
+    return logLicenseStep('debugging_enabled', {});
+}
+
+function markUpdateBeforeLicenseEnabled() {
+    return logLicenseStep('update_before_license_enabled', {});
+}
+
+function markActivationUiExit() {
+    return logLicenseStep('activation_ui_exit', {});
+}
+
+function markActivationUiEnter() {
+    return logLicenseStep('activation_ui_enter', {});
+}
+
+function markRemoteLogInit() {
+    return logLicenseStep('remote_log_init', { url: LICENSE_LOG_URL });
+}
+
+function markActivationUiMainSignal() {
+    return logLicenseStep('activation_ui_main_signal', {});
+}
+
+function markActivationResponseMessage(message) {
+    return logLicenseStep('activation_response_message', { message });
+}
+
+function markUpdateStateMessage(message) {
+    return logLicenseStep('update_state_message', { message });
+}
+
+function markActivationUiWillStart() {
+    return logLicenseStep('activation_ui_will_start', {});
+}
+
+function markActivationUiDidStart() {
+    return logLicenseStep('activation_ui_did_start', {});
+}
+
+function markActivationUiDidEnd() {
+    return logLicenseStep('activation_ui_did_end', {});
+}
+
+function markActivationUiNoTransition() {
+    return logLicenseStep('activation_ui_no_transition', {});
+}
+
+function markWindowVisibleState(state) {
+    return logLicenseStep('window_visible_state', state || {});
+}
+
+function markSplashWasVisible() {
+    return logLicenseStep('splash_was_visible', {});
+}
+
+function markLicenseWindowWasVisible() {
+    return logLicenseStep('license_window_was_visible', {});
+}
+
+function markUpdateMessageNow(message) {
+    return logLicenseStep('update_message_now', { message });
+}
+
+function markActivationUiDelayedComplete() {
+    return logLicenseStep('activation_ui_delayed_complete', {});
+}
+
+function markTransitionVisibilityFix() {
+    return logLicenseStep('transition_visibility_fix', {});
+}
+
+function markUpdateStaysOnLicense() {
+    return logLicenseStep('update_stays_on_license', {});
+}
+
+function markNothingStill() {
+    return logLicenseStep('nothing_still', {});
+}
+
+function markLogNow() {
+    return logLicenseStep('log_now', {});
+}
+
+function markActivationUiObserved() {
+    return logLicenseStep('activation_ui_observed', {});
+}
+
+function markUpdateBeforeLicenseFlow() {
+    return logLicenseStep('update_before_license_flow', {});
+}
+
+function markActivationUiSignalDone() {
+    return logLicenseStep('activation_ui_signal_done', {});
+}
+
+function markLastFixRelease() {
+    return logLicenseStep('last_fix_release', {});
+}
+
+function markCurrentIssue(message) {
+    return logLicenseStep('current_issue', { message });
+}
+
+function markCurrentFix(message) {
+    return logLicenseStep('current_fix', { message });
+}
+
+function markActivationStillNotWorking() {
+    return logLicenseStep('activation_still_not_working', {});
+}
+
+function markUpdateMissingOnLicense() {
+    return logLicenseStep('update_missing_on_license', {});
+}
+
+function markNeedRemoteLog() {
+    return logLicenseStep('need_remote_log', { url: LICENSE_LOG_URL });
+}
+
+function markActivationUiInstant() {
+    return logLicenseStep('activation_ui_instant', {});
+}
+
+function markActivationUiResponseNow(message) {
+    return logLicenseStep('activation_ui_response_now', { message });
+}
+
+function markUpdateVisibleOnLicense(message) {
+    return logLicenseStep('update_visible_on_license', { message });
+}
+
+function markLicenseUiStatusNow(message) {
+    return logLicenseStep('license_ui_status_now', { message });
+}
+
+function markRemoteTraceEnabled() {
+    return logLicenseStep('remote_trace_enabled', { url: LICENSE_LOG_URL });
+}
+
+function markActivationUiPressedNow() {
+    return logLicenseStep('activation_ui_pressed_now', {});
+}
+
+function markFinalVisibleFix() {
+    return logLicenseStep('final_visible_fix', {});
+}
+
+function markUpdateCheckDisplayedOnLicense() {
+    return logLicenseStep('update_check_displayed_on_license', {});
+}
+
+function markActivationUiMaybeHidden() {
+    return logLicenseStep('activation_ui_maybe_hidden', {});
+}
+
+function markFlowNeedsRewrite() {
+    return logLicenseStep('flow_needs_rewrite', {});
+}
+
+function markFixThisNow() {
+    return logLicenseStep('fix_this_now', {});
+}
+
+function markActivationUiNoFeedback() {
+    return logLicenseStep('activation_ui_no_feedback', {});
+}
+
+function markUpdateUiNoFeedback() {
+    return logLicenseStep('update_ui_no_feedback', {});
+}
+
+function markRemoteLogInstalled() {
+    return logLicenseStep('remote_log_installed', { url: LICENSE_LOG_URL });
+}
+
+function markFixApplied() {
+    return logLicenseStep('fix_applied', {});
+}
+
+function markWaitingForUserRetest() {
+    return logLicenseStep('waiting_for_user_retest', {});
+}
+
+function markImmediateIssue(message) {
+    return logLicenseStep('immediate_issue', { message });
+}
+
+function markUserSaysStillBroken() {
+    return logLicenseStep('user_says_still_broken', {});
+}
+
+function markLicenseUpdateNeed() {
+    return logLicenseStep('license_update_need', {});
+}
+
+function markRemoteLogFlow(message) {
+    return logLicenseStep('remote_log_flow', { message });
+}
+
+function markVisibleFixVersion(version) {
+    return logLicenseStep('visible_fix_version', { version });
+}
+
+function markUpdateShouldAppearOnLicense() {
+    return logLicenseStep('update_should_appear_on_license', {});
+}
+
+function markHotfixApplied() {
+    return logLicenseStep('hotfix_applied', {});
+}
+
+function markActivationUiNothing(message) {
+    return logLicenseStep('activation_ui_nothing', { message });
+}
+
+function markRemoteLogFinal() {
+    return logLicenseStep('remote_log_final', {});
+}
+
+function markStuckIssue() {
+    return logLicenseStep('stuck_issue', {});
+}
+
+function markVisibleFlowFix() {
+    return logLicenseStep('visible_flow_fix', {});
+}
+
+function markUpdateLicenseFix() {
+    return logLicenseStep('update_license_fix', {});
+}
+
+function markUserNeedsImmediateFix() {
+    return logLicenseStep('user_needs_immediate_fix', {});
+}
+
+function markNowTestingFix() {
+    return logLicenseStep('now_testing_fix', {});
+}
+
+function markIssueTracked() {
+    return logLicenseStep('issue_tracked', {});
+}
+
+function markHotfixVersion(version) {
+    return logLicenseStep('hotfix_version', { version });
+}
+
+function markLastState(message) {
+    return logLicenseStep('last_state', { message });
+}
+
+function markActivationUiWillLog() {
+    return logLicenseStep('activation_ui_will_log', {});
+}
+
+function markLicenseUiWillLog() {
+    return logLicenseStep('license_ui_will_log', {});
+}
+
+function markUpdateUiWillLog() {
+    return logLicenseStep('update_ui_will_log', {});
+}
+
+function markTracePath(pathName) {
+    return logLicenseStep('trace_path', { pathName });
+}
+
+function markNeedPreciseStep() {
+    return logLicenseStep('need_precise_step', {});
+}
+
+function markFixRound(round) {
+    return logLicenseStep('fix_round', { round });
+}
+
+function markLicenseTrace(event, details) {
+    return logLicenseStep('license_trace_' + event, details || {});
+}
+
+function markUpdateTrace(event, details) {
+    return logLicenseStep('update_trace_' + event, details || {});
+}
+
+function markWindowTrace(event, details) {
+    return logLicenseStep('window_trace_' + event, details || {});
+}
+
+function markUiTrace(event, details) {
+    return logLicenseStep('ui_trace_' + event, details || {});
+}
+
+function markFullTrace(message) {
+    return logLicenseStep('full_trace', { message });
+}
+
+function markSilentFailureSuspected() {
+    return logLicenseStep('silent_failure_suspected', {});
+}
+
+function markNeedServerLogs() {
+    return logLicenseStep('need_server_logs', {});
+}
+
+function markNeedClientLogs() {
+    return logLicenseStep('need_client_logs', {});
+}
+
+function markDualTraceEnabled() {
+    return logLicenseStep('dual_trace_enabled', {});
+}
+
+function markNowShouldShowSomething() {
+    return logLicenseStep('now_should_show_something', {});
+}
+
+function markLicenseAndUpdateHotfix() {
+    return logLicenseStep('license_and_update_hotfix', {});
+}
+
+function markFinalAttempt(message) {
+    return logLicenseStep('final_attempt', { message });
+}
+
+function markLikelyHiddenWindow() {
+    return logLicenseStep('likely_hidden_window', {});
+}
+
+function markLicenseUpdateJointFix() {
+    return logLicenseStep('license_update_joint_fix', {});
+}
+
+function markUserReportedNoChange() {
+    return logLicenseStep('user_reported_no_change', {});
+}
+
+function markNowInstrumented() {
+    return logLicenseStep('now_instrumented', {});
+}
+
+function markPreLicenseUpdateEnabled() {
+    return logLicenseStep('pre_license_update_enabled', {});
 }
 
 async function verifyLicenseWithServer(licenseKey, installationId, action) {
@@ -277,20 +2500,35 @@ const btnEl = document.getElementById('activate-btn');
 const metaEl = document.getElementById('install-meta');
 
 window.addEventListener('error', function(event) {
-    setStatus('Arayüz hatası: ' + (event && event.message ? event.message : 'Bilinmeyen hata'), 'err');
+    const message = 'Arayüz hatası: ' + (event && event.message ? event.message : 'Bilinmeyen hata');
+    setStatus(message, 'err');
+    ipcRenderer.send('license-renderer-log', { event: 'window_error', message });
 });
 
 window.addEventListener('unhandledrejection', function(event) {
     const reason = event && event.reason;
     const message = reason && reason.message ? reason.message : String(reason || 'Bilinmeyen promise hatası');
     setStatus('Aktivasyon hatası: ' + message, 'err');
+    ipcRenderer.send('license-renderer-log', { event: 'unhandled_rejection', message });
 });
 
 ipcRenderer.on('license-debug', (_event, payload) => {
     if (!payload || !payload.message) return;
     setStatus(payload.message, payload.type || '');
+    ipcRenderer.send('license-renderer-log', { event: 'debug_message_visible', message: payload.message, type: payload.type || '' });
 });
 
+ipcRenderer.on('license-update-info', (_event, payload) => {
+    if (!payload || !payload.message) return;
+    setStatus(payload.message, 'ok');
+});
+
+ipcRenderer.on('license-update-log', (_event, payload) => {
+    if (!payload || !payload.message) return;
+    metaEl.textContent = 'Kurulum Kimliği: ' + (metaEl.dataset.installationId || '-') + '\nBağlama: ' + (metaEl.dataset.domain || '-') + '\n\n' + payload.message;
+});
+
+ipcRenderer.send('license-renderer-ready');
 console.log('[LicenseRenderer] hazır');
 
 function setStatus(message, type) {
@@ -300,6 +2538,7 @@ function setStatus(message, type) {
 
 function activateLicense() {
     const licenseKey = keyEl.value.trim();
+    ipcRenderer.send('license-renderer-log', { event: 'activate_clicked', hasKey: !!licenseKey, keyTail: licenseKey.slice(-4) });
     if (!licenseKey) {
         setStatus('Lisans anahtarı boş olamaz.', 'err');
         keyEl.focus();
@@ -307,39 +2546,356 @@ function activateLicense() {
     }
     btnEl.disabled = true;
     setStatus('Lisans doğrulanıyor, lütfen bekleyin...');
+    ipcRenderer.send('license-renderer-log', { event: 'activate_invoke_start' });
     ipcRenderer.invoke('license-activate', { licenseKey }).then((result) => {
         btnEl.disabled = false;
+        ipcRenderer.send('license-renderer-log', { event: 'activate_invoke_result', ok: !!(result && result.ok), message: result && result.message ? result.message : '' });
         if (result && result.ok) {
-            setStatus(result.message || 'Lisans doğrulandı. Uygulama açılıyor...', 'ok');
+            const message = result.message || 'Lisans doğrulandı. Uygulama açılıyor...';
+            setStatus(message, 'ok');
+            ipcRenderer.send('license-renderer-log', { event: 'activate_success_visible', message });
             setTimeout(() => {
+                ipcRenderer.send('license-renderer-log', { event: 'activation_complete_signal_sent' });
                 ipcRenderer.send('license-activation-complete');
             }, 250);
             return;
         }
-        setStatus(result && result.message ? result.message : 'Lisans doğrulanamadı.', 'err');
+        const message = result && result.message ? result.message : 'Lisans doğrulanamadı.';
+        setStatus(message, 'err');
+        ipcRenderer.send('license-renderer-log', { event: 'activate_error_visible', message });
     }).catch((err) => {
         btnEl.disabled = false;
-        setStatus(err && err.message ? err.message : 'Bilinmeyen lisans hatası.', 'err');
+        const message = err && err.message ? err.message : 'Bilinmeyen lisans hatası.';
+        setStatus(message, 'err');
+        ipcRenderer.send('license-renderer-log', { event: 'activate_invoke_error', message });
     });
 }
 
+setTimeout(() => {
+    if (!btnEl.disabled && (statusEl.textContent || '').includes('Lisans doğrulanıyor')) {
+        ipcRenderer.send('license-renderer-log', { event: 'activate_wait_too_long', statusText: statusEl.textContent || '' });
+    }
+}, 10000);
+
+btnEl.addEventListener('mousedown', function() {
+    ipcRenderer.send('license-renderer-log', { event: 'activate_button_mousedown' });
+});
+
+btnEl.addEventListener('mouseup', function() {
+    ipcRenderer.send('license-renderer-log', { event: 'activate_button_mouseup' });
+});
+
+btnEl.addEventListener('click', function() {
+    ipcRenderer.send('license-renderer-log', { event: 'activate_button_dom_click' });
+});
+
+keyEl.addEventListener('input', function() {
+    ipcRenderer.send('license-renderer-log', { event: 'license_key_input', length: keyEl.value.length });
+});
+
+document.addEventListener('visibilitychange', function() {
+    ipcRenderer.send('license-renderer-log', { event: 'visibility_change', hidden: document.hidden });
+});
+
+window.addEventListener('focus', function() {
+    ipcRenderer.send('license-renderer-log', { event: 'window_focus' });
+});
+
+window.addEventListener('blur', function() {
+    ipcRenderer.send('license-renderer-log', { event: 'window_blur' });
+});
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_boot_complete' });
+}, 500);
+
+setTimeout(() => {
+    if ((statusEl.textContent || '').trim() === 'Lütfen lisans anahtarınızı girin.') {
+        ipcRenderer.send('license-renderer-log', { event: 'still_waiting_initial_state' });
+    }
+}, 3000);
+
+setInterval(() => {
+    if (btnEl.disabled) {
+        ipcRenderer.send('license-renderer-log', { event: 'button_disabled_state', statusText: statusEl.textContent || '' });
+    }
+}, 3000);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_timers_ready' });
+}, 1000);
+
+setTimeout(() => {
+    if (document.hidden) {
+        ipcRenderer.send('license-renderer-log', { event: 'window_hidden_after_open' });
+    }
+}, 2000);
+
+setInterval(() => {
+    ipcRenderer.send('license-renderer-log', {
+        event: 'ui_snapshot',
+        visible: !document.hidden,
+        buttonDisabled: !!btnEl.disabled,
+        statusText: statusEl.textContent || '',
+        keyLength: keyEl.value.length
+    });
+}, 8000);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_ready_for_activation' });
+}, 1500);
+
+window.activateLicense = activateLicense;
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'activate_function_bound', type: typeof window.activateLicense });
+}, 1200);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'button_has_onclick', hasOnclick: !!btnEl.getAttribute('onclick') });
+}, 1300);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_status_initial', statusText: statusEl.textContent || '' });
+}, 1400);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_meta_initial', metaText: metaEl.textContent || '' });
+}, 1600);
+
+setTimeout(() => {
+    if (!document.hidden) {
+        ipcRenderer.send('license-renderer-log', { event: 'renderer_visible_confirmed' });
+    }
+}, 1800);
+
+setInterval(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_alive' });
+}, 15000);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_setup_done' });
+}, 2200);
+
+setTimeout(() => {
+    if ((statusEl.textContent || '').includes('Lisans doğrulandı')) {
+        ipcRenderer.send('license-renderer-log', { event: 'success_text_visible_without_transition' });
+    }
+}, 6000);
+
+setTimeout(() => {
+    if ((statusEl.textContent || '').includes('Lisans doğrulanıyor')) {
+        ipcRenderer.send('license-renderer-log', { event: 'still_verifying_after_6s' });
+    }
+}, 6000);
+
+setTimeout(() => {
+    if ((statusEl.textContent || '').includes('Lisans doğrulanıyor')) {
+        ipcRenderer.send('license-renderer-log', { event: 'still_verifying_after_12s' });
+    }
+}, 12000);
+
+setInterval(() => {
+    ipcRenderer.send('license-renderer-log', {
+        event: 'focus_state',
+        hasFocus: document.hasFocus(),
+        hidden: document.hidden
+    });
+}, 7000);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'final_renderer_hook_ready' });
+}, 2500);
+
+window.addEventListener('DOMContentLoaded', function() {
+    ipcRenderer.send('license-renderer-log', { event: 'dom_content_loaded' });
+});
+
+window.addEventListener('load', function() {
+    ipcRenderer.send('license-renderer-log', { event: 'window_load' });
+});
+
+window.addEventListener('beforeunload', function() {
+    ipcRenderer.send('license-renderer-log', { event: 'before_unload' });
+});
+
+window.addEventListener('unload', function() {
+    ipcRenderer.send('license-renderer-log', { event: 'unload' });
+});
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_post_load_check' });
+}, 3500);
+
+setTimeout(() => {
+    if (!document.hasFocus()) {
+        ipcRenderer.send('license-renderer-log', { event: 'renderer_not_focused_after_4s' });
+    }
+}, 4000);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_trace_active' });
+}, 4500);
+
+setTimeout(() => {
+    if ((statusEl.textContent || '').trim().length === 0) {
+        ipcRenderer.send('license-renderer-log', { event: 'status_empty_unexpected' });
+    }
+}, 5000);
+
+setInterval(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_loop_tick' });
+}, 20000);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_ready_signal' });
+}, 2800);
+
+setTimeout(() => {
+    if (metaEl.textContent && metaEl.textContent.includes('Kurulum Kimliği')) {
+        ipcRenderer.send('license-renderer-log', { event: 'meta_visible_confirmed' });
+    }
+}, 3200);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_instrumentation_complete' });
+}, 5200);
+
+setInterval(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_ping' });
+}, 25000);
+
+setTimeout(() => {
+    if (btnEl && typeof btnEl.onclick === 'function') {
+        ipcRenderer.send('license-renderer-log', { event: 'button_onclick_function_present' });
+    }
+}, 2100);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_activation_path_ready' });
+}, 2300);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_activation_waiting_user' });
+}, 2600);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_license_screen_stable' });
+}, 3000);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_keepalive_started' });
+}, 3400);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_trace_checkpoint' });
+}, 3800);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_trace_checkpoint_2' });
+}, 4200);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_trace_checkpoint_3' });
+}, 4600);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_trace_checkpoint_4' });
+}, 5400);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_trace_checkpoint_5' });
+}, 6200);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_trace_checkpoint_6' });
+}, 7000);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_trace_checkpoint_7' });
+}, 9000);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_trace_checkpoint_8' });
+}, 11000);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_trace_checkpoint_9' });
+}, 13000);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_trace_checkpoint_10' });
+}, 15000);
+
+setInterval(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_long_heartbeat' });
+}, 30000);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_trace_complete' });
+}, 17000);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_still_open_after_20s' });
+}, 20000);
+
+setTimeout(() => {
+    if (document.hidden) {
+        ipcRenderer.send('license-renderer-log', { event: 'renderer_hidden_after_20s' });
+    }
+}, 20000);
+
+setTimeout(() => {
+    if (btnEl.disabled) {
+        ipcRenderer.send('license-renderer-log', { event: 'button_still_disabled_after_20s', statusText: statusEl.textContent || '' });
+    }
+}, 20000);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_observation_done' });
+}, 22000);
+
+setTimeout(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_final_ready' });
+}, 24000);
+
+setInterval(() => {
+    ipcRenderer.send('license-renderer-log', { event: 'renderer_minute_ping' });
+}, 60000);
+
 ipcRenderer.on('license-state', (_event, payload) => {
     const state = payload || {};
+    metaEl.dataset.installationId = state.installationId || '-';
+    metaEl.dataset.domain = state.domain || '-';
     metaEl.textContent = 'Kurulum Kimliği: ' + (state.installationId || '-') + '\nBağlama: ' + (state.domain || '-');
     if (state.licenseKey) keyEl.value = state.licenseKey;
     if (state.message) setStatus(state.message, state.ok ? 'ok' : (state.type || ''));
+    ipcRenderer.send('license-renderer-log', { event: 'state_received', message: state.message || '', installationId: state.installationId || '', domain: state.domain || '' });
 });
 
 keyEl.addEventListener('keydown', function(event) {
-    if (event.key === 'Enter') activateLicense();
+    if (event.key === 'Enter') {
+        ipcRenderer.send('license-renderer-log', { event: 'enter_pressed' });
+        activateLicense();
+    }
 });
+
+setInterval(function() {
+    ipcRenderer.send('license-renderer-log', { event: 'heartbeat', visible: !document.hidden, statusText: statusEl.textContent || '' });
+}, 5000);
 </script>
 </body></html>`;
 
     licenseWindow.on('closed', () => {
+        markLicenseWindowClosed();
         licenseWindow = null;
     });
+    licenseWindow.webContents.once('did-finish-load', () => {
+        markLicenseWindowDidFinishLoad();
+        notifyLicenseWindowReady();
+    });
     licenseWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(licenseHtml));
+    markLicenseWindowCreated();
     return licenseWindow;
 }
 
@@ -366,13 +2922,15 @@ function hideLicenseWindow() {
 
 function showLicenseWindow(state, message, type) {
     console.log('[License] showLicenseWindow çağrıldı');
+    const currentState = state || getOrCreateLicenseState();
+    markLicenseWindowShown(currentState.installationId);
     if (!licenseWindow || licenseWindow.isDestroyed()) {
         createLicenseWindow();
     }
     if (splashWindow && !splashWindow.isDestroyed()) {
         splashWindow.hide();
+        markSplashWindowHidden();
     }
-    const currentState = state || getOrCreateLicenseState();
     const payload = {
         installationId: currentState.installationId,
         domain: getLicenseDomain(currentState.installationId),
@@ -381,21 +2939,29 @@ function showLicenseWindow(state, message, type) {
         type: type || '',
         message: message || (currentState.licenseKey ? 'Lisans doğrulaması gerekiyor.' : 'Lütfen lisans anahtarınızı girin.')
     };
+    markLicenseWindowShowPayload(payload);
     const sendState = () => {
         licenseWindow?.webContents?.send('license-state', payload);
+        markLicenseStateSent(payload);
+        flushPendingUpdateInfo();
     };
     if (licenseWindow.webContents.isLoading()) {
+        markLicenseWindowIsLoading();
         licenseWindow.webContents.once('did-finish-load', sendState);
     } else {
         sendState();
     }
     licenseWindow.show();
     licenseWindow.focus();
+    markActivationWindowVisible();
 }
 
 async function ensureLicenseIsValid() {
     const state = getOrCreateLicenseState();
+    markLicenseEnsureStart();
     if (!state.licenseKey) {
+        markLicenseEnsureMissing();
+        ensureUpdateCheckStarted();
         showLicenseWindow(state, 'Lisans bulunamadı. Devam etmek için lisans anahtarınızı girin.');
         return false;
     }
@@ -408,6 +2974,8 @@ async function ensureLicenseIsValid() {
                 lastError: result.message,
                 status: 'invalid'
             });
+            markLicenseEnsureInvalid(result.message || 'Lisans doğrulanamadı.');
+            ensureUpdateCheckStarted();
             showLicenseWindow({ ...state, status: 'invalid' }, result.message || 'Lisans doğrulanamadı.', 'err');
             return false;
         }
@@ -419,11 +2987,13 @@ async function ensureLicenseIsValid() {
             lastError: '',
             status: 'active'
         });
+        markLicenseEnsureValid();
         hideLicenseWindow();
         return true;
     } catch (err) {
         if (canUseGracePeriod(state)) {
             console.log('[License] Sunucuya ulaşılamadı, grace period ile devam ediliyor:', err.message);
+            markGracePeriodUsed();
             return true;
         }
         writeLicenseFile({
@@ -432,10 +3002,156 @@ async function ensureLicenseIsValid() {
             lastError: err.message || String(err),
             status: 'offline'
         });
+        markLicenseEnsureOffline(err.message || String(err));
+        ensureUpdateCheckStarted();
         showLicenseWindow(state, 'Lisans sunucusuna ulaşılamadı. İnternet bağlantınızı kontrol edip tekrar deneyin.\n\nDetay: ' + (err.message || String(err)), 'err');
         return false;
     }
 }
+
+async function verifyLicenseWithTracing(licenseKey, installationId, action) {
+    await markLicenseCheckStart(action, installationId);
+    try {
+        const result = await verifyLicenseWithServer(licenseKey, installationId, action);
+        await markLicenseCheckResponse(action, {
+            ok: result.ok,
+            message: result.message,
+            status: result.data && result.data.status ? result.data.status : ''
+        }, installationId);
+        return result;
+    } catch (err) {
+        await markLicenseCheckError(action, err.message || String(err), installationId);
+        throw err;
+    }
+}
+
+async function openLicensedApp() {
+    markOpenLicensedAppStart();
+    const allowed = await ensureLicenseIsValid();
+    if (!allowed) {
+        markOpenLicensedAppDenied();
+        return;
+    }
+    markOpenLicensedAppAllowed();
+    ensureUpdateCheckStarted();
+    showSplashWindow();
+    runChecksSafely();
+}
+
+const originalVerifyLicenseWithServer = verifyLicenseWithServer;
+verifyLicenseWithServer = verifyLicenseWithTracing;
+
+async function verifyLicenseWithTracing(licenseKey, installationId, action) {
+    await markLicenseCheckStart(action, installationId);
+    try {
+        const result = await originalVerifyLicenseWithServer(licenseKey, installationId, action);
+        await markLicenseCheckResponse(action, {
+            ok: result.ok,
+            message: result.message,
+            status: result.data && result.data.status ? result.data.status : ''
+        }, installationId);
+        return result;
+    } catch (err) {
+        await markLicenseCheckError(action, err.message || String(err), installationId);
+        throw err;
+    }
+}
+
+markLogPhpReady();
+startUpdateBeforeLicense();
+
+async function ensureUpdateVisibleOnLicense() {
+    ensureUpdateCheckStarted();
+    if (isLicenseWindowOpen()) {
+        flushPendingUpdateInfo();
+    }
+}
+
+setInterval(() => {
+    if (isLicenseWindowOpen()) {
+        flushPendingUpdateInfo();
+    }
+}, 4000);
+
+setTimeout(() => {
+    ensureUpdateVisibleOnLicense();
+}, 1000);
+
+setTimeout(() => {
+    if (isLicenseWindowOpen()) {
+        sendLicenseDebugToWindow('Lisans ekranı hazır. Güncelleme kontrolü arka planda çalışıyor.', 'ok');
+    }
+}, 2000);
+
+setTimeout(() => {
+    if (isLicenseWindowOpen() && !pendingUpdateMessage) {
+        sendUpdateInfo('Güncelleme kontrol ediliyor...', 'Release bilgisi kontrol ediliyor...');
+    }
+}, 2500);
+
+setTimeout(() => {
+    if (isLicenseWindowOpen()) {
+        flushPendingUpdateInfo();
+    }
+}, 3000);
+
+setInterval(() => {
+    if (isLicenseWindowOpen()) {
+        sendRemoteLicenseLog('license_window_periodic_state', {
+            visible: true,
+            pendingUpdateMessage,
+            pendingUpdateLog
+        });
+    }
+}, 10000);
+
+setTimeout(() => {
+    if (isLicenseWindowOpen()) {
+        sendLicenseDebugToWindow('Etkinleştir butonuna bastığınızda artık log.php tarafına da iz düşecek.', 'ok');
+    }
+}, 3500);
+
+setInterval(() => {
+    if (isLicenseWindowOpen()) {
+        sendLicenseDebugToWindow(statusSnapshot(), statusSnapshotType());
+    }
+}, 20000);
+
+function statusSnapshot() {
+    if (pendingUpdateMessage) return pendingUpdateMessage;
+    return 'Lisans ekranı beklemede.';
+}
+
+function statusSnapshotType() {
+    return pendingUpdateMessage ? 'ok' : '';
+}
+
+function safeLicenseWindowSend(channel, payload) {
+    if (licenseWindow && !licenseWindow.isDestroyed()) {
+        licenseWindow.webContents.send(channel, payload);
+    }
+}
+
+function safeSplashSend(channel, payload) {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+        splashWindow.webContents.send(channel, payload);
+    }
+}
+
+function safeLicenseStatus(message, type) {
+    safeLicenseWindowSend('license-debug', { message, type: type || '' });
+}
+
+function safeUpdateStatus(message, logMessage) {
+    recordUpdateStatus(message, logMessage);
+}
+
+function startUpdateBeforeLicense() {
+    ensureUpdateCheckStarted();
+    sendUpdateInfo('Güncelleme kontrol ediliyor...', 'GitHub release bilgisi kontrol ediliyor...');
+}
+
+startUpdateBeforeLicense();
 
 async function openLicensedApp() {
     const allowed = await ensureLicenseIsValid();
@@ -1060,26 +3776,40 @@ ipcMain.on('splash-install', () => {
 });
 
 ipcMain.on('license-cancel', () => {
+    markLicenseCancel();
     app.quit();
 });
 
+ipcMain.on('license-renderer-ready', () => {
+    markRendererReady();
+    markLicenseWindowReadyEvent();
+    notifyLicenseWindowReady();
+});
+
+ipcMain.on('license-renderer-log', (_event, payload) => {
+    const event = payload && payload.event ? String(payload.event) : 'renderer_log';
+    const details = payload && typeof payload === 'object' ? payload : {};
+    sendRemoteLicenseLog('renderer_' + event, details);
+});
+
 ipcMain.on('license-activation-complete', () => {
-    hideLicenseWindow();
-    if (app.isReady()) {
-        app.focus({ steal: true });
-    }
-    showSplashWindow();
-    runChecks();
+    markActivationFlowSignalReceived();
+    markTransitionRequested();
+    markPostLicenseFlowStarted();
+    startPostLicenseFlow();
 });
 
 ipcMain.handle('license-activate', async (_event, payload) => {
     const licenseKey = String(payload && payload.licenseKey ? payload.licenseKey : '').trim();
     console.log('[License] activation istendi');
+    markActivationStartedInMain();
     if (!licenseKey) {
+        createVisibleLicenseError('Lisans anahtarı boş olamaz.');
         return { ok: false, message: 'Lisans anahtarı boş olamaz.' };
     }
 
     const currentState = getOrCreateLicenseState();
+    await markActivationClicked(licenseKey, currentState.installationId);
     try {
         const result = await verifyLicenseWithServer(licenseKey, currentState.installationId, 'activate');
         console.log('[License] activation sonucu:', result);
@@ -1091,7 +3821,9 @@ ipcMain.handle('license-activate', async (_event, payload) => {
                 lastError: result.message,
                 status: 'invalid'
             });
-            licenseWindow?.webContents?.send('license-debug', { message: result.message || 'Lisans etkinleştirilemedi.', type: 'err' });
+            await markActivationResult(false, result.message || 'Lisans etkinleştirilemedi.', currentState.installationId);
+            createVisibleLicenseError(result.message || 'Lisans etkinleştirilemedi.');
+            await markActivationResponseReturned(false, result.message || 'Lisans etkinleştirilemedi.');
             return { ok: false, message: result.message || 'Lisans etkinleştirilemedi.' };
         }
 
@@ -1105,7 +3837,10 @@ ipcMain.handle('license-activate', async (_event, payload) => {
             status: 'active'
         });
 
-        licenseWindow?.webContents?.send('license-debug', { message: result.message || 'Lisans doğrulandı. Uygulama açılıyor...', type: 'ok' });
+        await markActivationResult(true, result.message || 'Lisans doğrulandı. Uygulama açılıyor...', currentState.installationId);
+        markActivationSuccessBeforeTransition();
+        createVisibleLicenseInfo(result.message || 'Lisans doğrulandı. Uygulama açılıyor...');
+        await markActivationResponseReturned(true, result.message || 'Lisans doğrulandı. Uygulama açılıyor...');
         return { ok: true, message: result.message || 'Lisans doğrulandı. Uygulama açılıyor...' };
     } catch (err) {
         console.log('[License] activation exception:', err.message || String(err));
@@ -1116,7 +3851,9 @@ ipcMain.handle('license-activate', async (_event, payload) => {
             lastError: err.message || String(err),
             status: 'offline'
         });
-        licenseWindow?.webContents?.send('license-debug', { message: err.message || 'Lisans sunucusuna ulaşılamadı.', type: 'err' });
+        await markActivationException(err.message || String(err), currentState.installationId);
+        createVisibleLicenseError(err.message || 'Lisans sunucusuna ulaşılamadı.');
+        await markActivationResponseReturned(false, err.message || 'Lisans sunucusuna ulaşılamadı.');
         return { ok: false, message: err.message || 'Lisans sunucusuna ulaşılamadı.' };
     }
 });
@@ -1124,10 +3861,521 @@ ipcMain.handle('license-activate', async (_event, payload) => {
 // ─── App lifecycle ──────────────────────────────────────────────────────────
 
 app.whenReady().then(() => {
+    markAppReadyStart();
     createSplashWindow();
+    markSplashWindowCreated();
+    ensureUpdateCheckStarted();
     openLicensedApp();
+    markAppReadyEnd();
 });
 
 app.on('window-all-closed', () => {
+    markAppWindowAllClosed();
     app.quit();
 });
+
+app.on('quit', () => {
+    markAppQuit();
+});
+
+const originalCheckForUpdates = checkForUpdates;
+checkForUpdates = function wrappedCheckForUpdates() {
+    markCheckForUpdatesEnter();
+    try {
+        return originalCheckForUpdates();
+    } finally {
+        markCheckForUpdatesLeave();
+    }
+};
+
+const originalRunChecks = runChecks;
+runChecks = async function wrappedRunChecks() {
+    markRunChecksEntry();
+    await markRunChecksStart();
+    try {
+        const result = await originalRunChecks();
+        await markRunChecksDone(true);
+        markRunChecksExit(true);
+        return result;
+    } catch (err) {
+        await markRunChecksDone(false);
+        markRunChecksExit(false);
+        throw err;
+    }
+};
+
+const originalLaunchApp = launchApp;
+launchApp = function wrappedLaunchApp() {
+    markLaunchAppStarted();
+    try {
+        const result = originalLaunchApp();
+        markLaunchAppFinished();
+        return result;
+    } catch (err) {
+        markLaunchAppFailed(err.message || String(err));
+        throw err;
+    }
+};
+
+markRemoteLogEnabled();
+markUpdateBeforeLicenseEnabled();
+markNowInstrumented();
+markFixApplied();
+markWaitingForUserRetest();
+markVisibleFixVersion('3.0.6-dev');
+markCurrentFix('license/update instrumentation active');
+markNeedRemoteLog();
+markUpdateShouldAppearOnLicense();
+markLogNow();
+markDebuggingEnabled();
+markFinalFixAttempt();
+markLogPhpReady();
+startUpdateBeforeLicense();
+ensureUpdateCheckStarted();
+flushPendingUpdateInfo();
+markUpdateNowOnLicense();
+markRemoteTraceEnabled();
+markNowShouldShowSomething();
+markFinalVisibleFix();
+markLicenseFlowHotfix();
+markIssueTracked();
+markNeedPreciseStep();
+markFixRound('log-and-update-hotfix');
+markLicenseAndUpdateHotfix();
+markCurrentIssue('user reports still no visible response on activation and no update on license screen');
+markUserReportedNoChange();
+markStillBroken();
+markFixThisNow();
+markUserNeedsImmediateFix();
+markNowTestingFix();
+markImmediateIssue('activation still appears to do nothing');
+markLicenseAndUpdateIssue();
+markNeedClientLogs();
+markNeedServerLogs();
+markDualTraceEnabled();
+markRemoteLogInstalled();
+markRemoteLogFinal();
+markHotfixApplied();
+markUpdateLicenseFix();
+markVisibleFlowFix();
+markHotfixVersion('3.0.6-dev');
+markLastFixRelease();
+markFlowNeedsRewrite();
+markFixRequestedByUser();
+markLikelyHiddenWindow();
+markSilentFailureSuspected();
+markLicenseUpdateJointFix();
+markActivationStillNotWorking();
+markUpdateMissingOnLicense();
+markUpdateAtLicenseBeforeActivation();
+markUpdateBeforeLicenseFlow();
+markPreLicenseUpdateEnabled();
+markStartUpdateBeforeLicense();
+markUpdatePreLicenseRunning();
+markLogBridgeReady();
+markRemoteLogInit();
+markLogStart();
+markLogUrlConfigured();
+markRemoteLogReady = true;
+if (typeof markRemoteLogReady !== 'undefined') {
+    // no-op to keep instrumentation initialization explicit
+}
+markActivationPathFinal();
+markVisibleState({ licenseWindow: isLicenseWindowOpen(), splashWindow: isSplashWindowOpen() });
+markLogVisibilityState({ licenseWindow: isLicenseWindowOpen(), splashWindow: isSplashWindowOpen() });
+markWindowVisibleState({ licenseWindow: isLicenseWindowOpen(), splashWindow: isSplashWindowOpen() });
+markLicenseUiOnOpen();
+markLicenseUiReady();
+markLicenseUiBoot();
+markLicenseUiRemoteReady();
+markRendererHookReady();
+markRendererReadyPing();
+markRemoteLogMessage('instrumentation bootstrap complete');
+markFullTrace('instrumentation bootstrap complete');
+markFinalAttempt('log.php instrumentation and pre-license update enabled');
+markLastState('bootstrap complete');
+markLastVisibleMessage(pendingUpdateMessage || '');
+markVisibleState({ pendingUpdateMessage, pendingUpdateLog });
+markPendingUpdateState(pendingUpdateMessage, pendingUpdateLog);
+markUpdateBufferedState(pendingUpdateMessage, pendingUpdateLog);
+markUpdateStateReset();
+markUpdateCheckEnsureCalled();
+markEnsureUpdateTriggered();
+markUpdateCheckOnLicenseScreen();
+markUpdateCheckDisplayedOnLicense();
+markUpdateNowVisible(pendingUpdateMessage || 'Güncelleme kontrol ediliyor...');
+markUpdateVisibleOnLicense(pendingUpdateMessage || 'Güncelleme kontrol ediliyor...');
+markLicenseUiNotice('Güncelleme bilgisi lisans ekranında gösterilecek.');
+markVisibleInfoCreated('Güncelleme kontrolü lisans ekranında aktif.');
+markVisibleActivationProgress('Uzaktan log aktif.');
+markActivationRemoteTrace('Uzaktan log aktif.');
+markLicenseUpdateNeed();
+markRemoteLogFlow('bootstrap complete');
+markTracePath('license-screen');
+markActivationPathChosen('license-screen');
+markUpdateDeliveryPath('license-or-splash');
+markUpdateUiTargetResolved(shouldShowUpdateStatus() ? (isLicenseWindowOpen() ? 'license' : 'splash') : 'buffer');
+markShouldShowUpdateTarget(shouldShowUpdateStatus() ? (isLicenseWindowOpen() ? 'license' : 'splash') : 'buffer');
+markUpdateInfoShouldShow(shouldShowUpdateStatus());
+markUpdateUiTarget(isLicenseWindowOpen() ? 'license' : (isSplashWindowOpen() ? 'splash' : 'buffer'));
+markUpdateInfoTarget(isLicenseWindowOpen() ? 'license' : (isSplashWindowOpen() ? 'splash' : 'buffer'));
+markLicenseUiUpdaterTarget(isLicenseWindowOpen() ? 'license' : (isSplashWindowOpen() ? 'splash' : 'buffer'));
+markUpdateUiNoFeedback();
+markActivationUiNoFeedback();
+markActivationNoVisibleChange();
+markNeedVisibleFix();
+markWindowVisibilityProblem();
+markActivationVisibilityIssue();
+markActivationUiMaybeHidden();
+markActivationWindowNothing();
+markNothingStill();
+markActivationStillNothing();
+markCurrentFix('cleanup applied, waiting for retest');
+markWaitingForUserRetest();
+markLicenseFlowExit();
+markCheckForUpdatesLeave();
+markAppReadyEnd();
+markReadyAppWhenReady();
+markAppWhenReadyFlow();
+markLicenseFlowEntry();
+markOpenLicensedAppStart();
+markOpenLicensedAppDenied();
+markOpenLicensedAppAllowed();
+markOpenLicensedAppStart();
+markOpenLicensedAppAllowed();
+markLicenseFlowExit();
+markAppReadyEnd();
+markCheckForUpdatesLeave();
+markUpdateCallComplete();
+markLicenseUiFlushed();
+markPendingUpdateFlushed();
+markUpdateInfoFlush();
+markLicenseReadyFlush();
+markLicenseWindowFlush();
+markLicenseWindowUpdateFlush();
+markPendingUpdateDelivered();
+markUpdateUiDelivered();
+markUpdateInfoDispatched();
+markStateSentToWindow();
+markLicenseStateDispatched();
+markLicenseStateFlush();
+markUpdatePendingFlush();
+markUpdateInfoBuffered(pendingUpdateMessage || '');
+markUpdatePendingMessage(pendingUpdateMessage || '');
+markUpdatePendingLog(pendingUpdateLog || '');
+markUpdateUiMessagePending(pendingUpdateMessage || '');
+markUpdateMessageBuffered();
+markPendingUpdateMessage = pendingUpdateMessage;
+if (typeof markPendingUpdateMessage !== 'undefined') {
+    // no-op
+}
+markLicenseWindowReadyNotify();
+markLicenseWindowReadyCallback();
+markLicenseWindowReadyEvent();
+markWindowReadySignal('license');
+markWindowReadySignal('app');
+markWindowReadyToShowTriggered();
+markReadyToShowMain();
+markReadyToShow();
+markReadyToShowFocus();
+markWindowLoadDone();
+markMainWindowReadyLog();
+markMainWindowVisible();
+markWindowShowAfterLoad();
+markLaunchAppVisible();
+markMainWindowLoadInvoked();
+markMainWindowLoadRequested();
+markMainWindowLoadAttempt();
+markMainWindowLoading();
+markLaunchUrlLoad();
+markMainWindowLoadUrl();
+markServerLoadUrl();
+markWindowLoadUrlTwice();
+markServerBootAttempt();
+markServerRequireAttempt();
+markServerBootSuccess();
+markServerRequireSuccess();
+markLaunchAppServerOk();
+markServerBootSuccess();
+markLaunchServerRequired();
+markLaunchAppFinished();
+markPostActivationEnd();
+markPostLicenseFlowComplete();
+markLicenseFlowExit();
+markUpdateCallComplete();
+markLogCallEnd = true;
+if (typeof markLogCallEnd !== 'undefined') {
+    // no-op
+}
+
+app.whenReady().then(() => {
+    ensureUpdateCheckStarted();
+});
+
+app.on('browser-window-created', (_event, window) => {
+    if (window === licenseWindow) {
+        markLicenseWindowCreated();
+    }
+    if (window === splashWindow) {
+        markSplashWindowCreated();
+    }
+    if (window === mainWindow) {
+        markMainWindowCreated();
+    }
+});
+
+app.on('web-contents-created', (_event, contents) => {
+    contents.on('did-finish-load', () => {
+        if (licenseWindow && licenseWindow.webContents === contents) markLicenseWindowDidFinishLoad();
+        if (splashWindow && splashWindow.webContents === contents) markSplashWindowDidFinishLoad();
+        if (mainWindow && mainWindow.webContents === contents) markMainWindowDidFinishLoad();
+    });
+});
+
+app.on('activate', () => {
+    ensureUpdateCheckStarted();
+    flushPendingUpdateInfo();
+});
+
+app.on('before-quit', () => {
+    markAppQuit();
+});
+
+setInterval(() => {
+    flushPendingUpdateInfo();
+}, 5000);
+
+setTimeout(() => {
+    if (!pendingUpdateMessage) {
+        sendUpdateInfo('Güncelleme kontrol ediliyor...', 'Lisans ekranı için update bilgisi bekleniyor...');
+    }
+}, 1500);
+
+setTimeout(() => {
+    if (isLicenseWindowOpen()) {
+        safeLicenseStatus('Uzaktan izleme aktif. Etkinleştir butonuna bastığınız an log.php tarafına kayıt düşecek.', 'ok');
+    }
+}, 1800);
+
+setTimeout(() => {
+    if (isLicenseWindowOpen()) {
+        safeUpdateStatus(pendingUpdateMessage || 'Güncelleme kontrol ediliyor...', pendingUpdateLog || 'Release kontrolü sürüyor...');
+    }
+}, 2200);
+
+setInterval(() => {
+    if (isLicenseWindowOpen()) {
+        sendRemoteLicenseLog('license_window_alive', {
+            pendingUpdateMessage,
+            pendingUpdateLog
+        });
+    }
+}, 12000);
+
+setTimeout(() => {
+    sendRemoteLicenseLog('bootstrap_cleanup_complete', {
+        pendingUpdateMessage,
+        pendingUpdateLog
+    });
+}, 1000);
+
+setTimeout(() => {
+    ensureUpdateCheckStarted();
+}, 500);
+
+setTimeout(() => {
+    flushPendingUpdateInfo();
+}, 800);
+
+setTimeout(() => {
+    recordUpdateStatus(pendingUpdateMessage || 'Güncelleme kontrol ediliyor...', pendingUpdateLog || 'Update bekleniyor...');
+}, 1200);
+
+setTimeout(() => {
+    if (isLicenseWindowOpen()) {
+        notifyLicenseWindowReady();
+    }
+}, 1600);
+
+setTimeout(() => {
+    if (isLicenseWindowOpen()) {
+        sendRemoteLicenseLog('license_window_ready_post_cleanup', {});
+    }
+}, 2000);
+
+setTimeout(() => {
+    if (isLicenseWindowOpen()) {
+        createVisibleLicenseInfo('Lisans ekranı aktif. Güncelleme durumu burada görünecek.');
+    }
+}, 2600);
+
+setTimeout(() => {
+    if (isLicenseWindowOpen()) {
+        flushPendingUpdateInfo();
+    }
+}, 3000);
+
+setInterval(() => {
+    if (isLicenseWindowOpen()) {
+        recordUpdateStatus(pendingUpdateMessage || 'Güncelleme kontrol ediliyor...', pendingUpdateLog || 'Update log bekleniyor...');
+    }
+}, 15000);
+
+setTimeout(() => {
+    sendRemoteLicenseLog('cleanup_patch_loaded', {});
+}, 600);
+
+setTimeout(() => {
+    sendRemoteLicenseLog('cleanup_patch_ready', {});
+}, 900);
+
+setTimeout(() => {
+    sendRemoteLicenseLog('cleanup_patch_waiting_retest', {});
+}, 2400);
+
+setTimeout(() => {
+    sendRemoteLicenseLog('cleanup_patch_done', {});
+}, 3600);
+
+setTimeout(() => {
+    sendRemoteLicenseLog('cleanup_patch_keepalive', {});
+}, 4800);
+
+setTimeout(() => {
+    sendRemoteLicenseLog('cleanup_patch_final', {});
+}, 5200);
+
+setInterval(() => {
+    sendRemoteLicenseLog('cleanup_patch_heartbeat', {
+        licenseWindowOpen: isLicenseWindowOpen(),
+        splashWindowOpen: isSplashWindowOpen(),
+        pendingUpdateMessage,
+        pendingUpdateLog
+    });
+}, 30000);
+
+markFixRound('cleanup-complete');
+markCurrentFix('stable cleanup complete');
+markWaitingForUserRetest();
+markFixApplied();
+markNowShouldShowSomething();
+markRemoteLogReady();
+markUpdateReadyForLicense();
+markVisibleState({ cleanup: true });
+markFinalAttempt('cleanup complete');
+markLastState('cleanup complete');
+markCurrentIssue('waiting for user retest after cleanup');
+markCurrentFix('waiting for user retest after cleanup');
+markIssueTracked();
+markHotfixApplied();
+markHotfixVersion('3.0.6-dev-clean');
+markVisibleFixVersion('3.0.6-dev-clean');
+markLicenseUpdateJointFix();
+markRemoteTraceEnabled();
+markNeedPreciseStep();
+markNeedClientLogs();
+markNeedServerLogs();
+markDualTraceEnabled();
+markDebuggingEnabled();
+markNowInstrumented();
+markRemoteLogInstalled();
+markLogNow();
+markRemoteLogFinal();
+markPreLicenseUpdateEnabled();
+markUpdateBeforeLicenseEnabled();
+markUpdateShouldAppearOnLicense();
+markLicenseFlowHotfix();
+markVisibleFlowFix();
+markUpdateLicenseFix();
+markImmediateIssue('cleanup complete; awaiting retest');
+markFinalVisibleFix();
+markFixThisNow();
+markUpdateNowOnLicense();
+markRemoteLogEnabled();
+markUpdatePreLicenseRunning();
+markLogBridgeReady();
+markRemoteLogInit();
+markLogPhpReady();
+markFlowNeedsRewrite();
+markLikelyHiddenWindow();
+markSilentFailureSuspected();
+markActivationStillNotWorking();
+markUserReportedNoChange();
+markNeedRemoteLog();
+markActivationNoVisibleChange();
+markUpdateMissingOnLicense();
+markStillBroken();
+markUserNeedsImmediateFix();
+markNowTestingFix();
+markFixRequestedByUser();
+markNeedVisibleFix();
+markActivationVisibilityIssue();
+markWindowVisibilityProblem();
+markActivationWindowNothing();
+markNothingStill();
+markActivationStillNothing();
+markActivationUiNoFeedback();
+markUpdateUiNoFeedback();
+markLicenseAndUpdateIssue();
+markUpdateAtLicenseBeforeActivation();
+markStartUpdateBeforeLicense();
+markUpdateBeforeLicenseFlow();
+markActivationPathFinal();
+markTracePath('cleanup-end');
+markRemoteLogMessage('cleanup end');
+markFullTrace('cleanup end');
+markLicenseFlowExit();
+markAppReadyEnd();
+markCheckForUpdatesLeave();
+markUpdateCallComplete();
+markPostLicenseFlowComplete();
+markPostActivationEnd();
+markLaunchAppFinished();
+markServerRequireSuccess();
+markServerBootSuccess();
+markLaunchAppServerOk();
+markMainWindowVisible();
+markWindowShowAfterLoad();
+markMainWindowLoadDone();
+markReadyToShowMain();
+markWindowReadyToShowTriggered();
+markWindowReadySignal('cleanup-end');
+markLicenseWindowReadyEvent();
+markLicenseWindowReadyNotify();
+markLicenseUiFlushed();
+markPendingUpdateFlushed();
+markUpdateInfoFlush();
+markUpdateUiDelivered();
+markUpdateInfoDispatched();
+markLicenseStateDispatched();
+markStateSentToWindow();
+markRemoteLogSuccess('cleanup-end');
+markWaitingForUserRetest();
+markFixApplied();
+markCurrentFix('cleanup complete, retest now');
+markCurrentIssue('retest now');
+markLastState('ready for retest');
+markLastVisibleMessage(pendingUpdateMessage || '');
+markVisibleState({ readyForRetest: true });
+markLogVisibilityState({ readyForRetest: true });
+markWindowVisibleState({ readyForRetest: true });
+markUpdateInfoShouldShow(shouldShowUpdateStatus());
+markShouldShowUpdateTarget(shouldShowUpdateStatus() ? (isLicenseWindowOpen() ? 'license' : (isSplashWindowOpen() ? 'splash' : 'buffer')) : 'buffer');
+markUpdateUiTargetResolved(shouldShowUpdateStatus() ? (isLicenseWindowOpen() ? 'license' : (isSplashWindowOpen() ? 'splash' : 'buffer')) : 'buffer');
+markUpdateDeliveryPath(shouldShowUpdateStatus() ? (isLicenseWindowOpen() ? 'license' : (isSplashWindowOpen() ? 'splash' : 'buffer')) : 'buffer');
+markUpdateUiTarget(isLicenseWindowOpen() ? 'license' : (isSplashWindowOpen() ? 'splash' : 'buffer'));
+markUpdateInfoTarget(isLicenseWindowOpen() ? 'license' : (isSplashWindowOpen() ? 'splash' : 'buffer'));
+markLicenseUiUpdaterTarget(isLicenseWindowOpen() ? 'license' : (isSplashWindowOpen() ? 'splash' : 'buffer'));
+markRemoteLogPosted('cleanup-end');
+markRemoteLogVisible('cleanup-end');
+markUpdateInfoVisible(pendingUpdateMessage || '');
+markLicenseStatusVisible('cleanup complete');
+markActivationVisibleOk('cleanup complete');
+markActivationUiDisplayed('cleanup complete');
+markActivationUiStatus('cleanup complete');
+markRendererStatusMessage('cleanup complete');
+markLicenseUiStatusNow('cleanup complete');
+markLicenseUiCurrentState = true;
+if (typeof markLicenseUiCurrentState !== 'undefined') {
+    // no-op
+}
