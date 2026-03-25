@@ -1343,6 +1343,10 @@ function markLogPostRequested(event) {
     return logLicenseStep('log_post_requested', { event });
 }
 
+function markLogCallEnd() {
+    return logLicenseStep('log_call_end', {});
+}
+
 function markMainWindowLoadAttempt() {
     return logLicenseStep('main_window_load_attempt', {});
 }
@@ -4002,10 +4006,7 @@ markLogBridgeReady();
 markRemoteLogInit();
 markLogStart();
 markLogUrlConfigured();
-markRemoteLogReady = true;
-if (typeof markRemoteLogReady !== 'undefined') {
-    // no-op to keep instrumentation initialization explicit
-}
+markRemoteLogReady();
 markActivationPathFinal();
 markVisibleState({ licenseWindow: isLicenseWindowOpen(), splashWindow: isSplashWindowOpen() });
 markLogVisibilityState({ licenseWindow: isLicenseWindowOpen(), splashWindow: isSplashWindowOpen() });
@@ -4129,10 +4130,7 @@ markPostActivationEnd();
 markPostLicenseFlowComplete();
 markLicenseFlowExit();
 markUpdateCallComplete();
-markLogCallEnd = true;
-if (typeof markLogCallEnd !== 'undefined') {
-    // no-op
-}
+markLogCallEnd();
 
 app.whenReady().then(() => {
     ensureUpdateCheckStarted();
@@ -4401,7 +4399,4 @@ markActivationUiDisplayed('cleanup complete');
 markActivationUiStatus('cleanup complete');
 markRendererStatusMessage('cleanup complete');
 markLicenseUiStatusNow('cleanup complete');
-markLicenseUiCurrentState = true;
-if (typeof markLicenseUiCurrentState !== 'undefined') {
-    // no-op
-}
+markLicenseUiCurrentState('cleanup complete');
